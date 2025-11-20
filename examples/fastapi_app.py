@@ -1,379 +1,97 @@
-"""FastAPI application example with RootSense integration.
+"""FastAPI application example with RootSense integration."""
 
-This example demonstrates:
-- FastAPI integration using RootSenseFastAPI
-- Automatic error capture from FastAPI routes
-- Async/await support
-- Request context tracking
-- Background tasks integration
-- WebSocket error handling
-
-Installation:
-    pip install rootsense[fastapi]
-
-Run:
-    uvicorn fastapi_app:app --reload
-    
-Test endpoints:
-    http://localhost:8000/               # API info
-    http://localhost:8000/docs           # Swagger UI
-    http://localhost:8000/error          # Trigger error
-    http://localhost:8000/async-error    # Async error
-    http://localhost:8000/user/123       # User route
-"""
-
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from typing import Optional
-import rootsense
-from rootsense.integrations.fastapi import RootSenseFastAPI
-import asyncio
-import random
+import os
 import time
+import asyncio
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import rootsense
+from rootsense.integrations.fastapi import capture_fastapi_errors
+from rootsense.tracing import get_tracer
 
-
-# Pydantic models
-class PaymentRequest(BaseModel):
-    amount: float = Field(..., gt=0, description="Payment amount")
-    currency: str = Field(default="USD", description="Currency code")
-    method: str = Field(default="credit_card", description="Payment method")
-    user_id: Optional[str] = Field(None, description="User ID")
-
-
-class PaymentResponse(BaseModel):
-    status: str
-    transaction_id: str
-    amount: float
-    message: str
-
-
-# Create FastAPI app
-app = FastAPI(
-    title="RootSense FastAPI Demo",
-    description="Demo application with RootSense error tracking",
-    version="1.0.0"
-)
-
-# Initialize RootSense for FastAPI
-# This automatically:
-# - Captures all unhandled exceptions
-# - Adds request context (URL, method, headers, etc.)
-# - Tracks async operations
-# - Exposes /metrics endpoint for Prometheus
-RootSenseFastAPI(
-    app,
-    api_key="your-api-key",  # Replace with your actual API key
-    project_id="your-project-id",  # Replace with your project ID
-    environment="production",
-    send_default_pii=False,
-    enable_prometheus=True,
+# Initialize RootSense
+rootsense.init(
+    api_key=os.getenv("ROOTSENSE_API_KEY", "test_api_key"),
+    project_id=os.getenv("ROOTSENSE_PROJECT_ID", "test_project_id"),
+    environment="development",
     debug=True
 )
+
+app = FastAPI(title="FastAPI with RootSense")
+
+# Add RootSense middleware
+capture_fastapi_errors(app)
+
+# Get tracer for distributed tracing
+tracer = get_tracer()
+
+
+class User(BaseModel):
+    id: int
+    username: str
+    email: str
 
 
 @app.get("/")
 async def root():
-    """Root endpoint with API information."""
     return {
-        "message": "Welcome to RootSense FastAPI Demo",
-        "docs": "/docs",
-        "endpoints": [
-            "/",
-            "/error",
-            "/async-error",
-            "/user/{user_id}",
-            "/payment",
-            "/slow",
-            "/background-task",
-            "/metrics"
-        ]
+        "message": "FastAPI app with RootSense integration",
+        "status": "healthy"
     }
 
 
-@app.get("/error")
+@app.get("/api/users/{user_id}")
+async def get_user(user_id: int):
+    """Get user by ID - demonstrates successful request tracking."""
+    with tracer.trace("get_user") as span:
+        span.set_tag("user_id", user_id)
+        
+        # Simulate database query
+        await asyncio.sleep(0.1)
+        
+        return {
+            "id": user_id,
+            "username": f"user_{user_id}",
+            "email": f"user{user_id}@example.com"
+        }
+
+
+@app.get("/api/error")
 async def trigger_error():
-    """Endpoint that deliberately throws an error."""
-    rootsense.push_breadcrumb(
-        message="User requested /error endpoint",
-        category="navigation",
-        level="info"
-    )
-    
-    rootsense.set_tag("error_type", "deliberate")
-    
-    # This will be automatically captured by RootSense
-    raise ValueError("This is a deliberate error for testing!")
+    """Trigger an error - demonstrates error capture."""
+    raise ValueError("This is a test error!")
 
 
-@app.get("/async-error")
-async def trigger_async_error():
-    """Endpoint with error in async operation."""
-    rootsense.push_breadcrumb(
-        message="Starting async operation",
-        category="async",
-        level="info"
-    )
-    
-    # Simulate async operation
-    await asyncio.sleep(0.1)
-    
-    rootsense.push_breadcrumb(
-        message="Async operation failed",
-        category="async",
-        level="error"
-    )
-    
-    raise RuntimeError("Error in async operation!")
+@app.get("/api/http-error")
+async def http_error():
+    """Trigger HTTP error - demonstrates HTTPException handling."""
+    raise HTTPException(status_code=404, detail="Resource not found")
 
 
-@app.get("/user/{user_id}")
-async def get_user(user_id: str):
-    """User-specific route with context."""
-    # Set user context
-    rootsense.set_user(
-        id=user_id,
-        username=f"user_{user_id}",
-        email=f"user{user_id}@example.com"
-    )
-    
-    # Add tags
-    user_num = int(user_id) if user_id.isdigit() else 0
-    rootsense.set_tag("user_type", "premium" if user_num % 2 == 0 else "free")
-    
-    # Simulate errors for some users
-    if user_num % 5 == 0:
-        rootsense.push_breadcrumb(
-            message=f"Database query for user {user_id}",
-            category="database",
-            level="info"
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to load profile for user {user_id}"
-        )
-    
-    return {
-        "user_id": user_id,
-        "username": f"user_{user_id}",
-        "status": "active",
-        "plan": "premium" if user_num % 2 == 0 else "free"
-    }
-
-
-@app.post("/payment", response_model=PaymentResponse)
-async def process_payment(payment: PaymentRequest):
-    """Payment processing endpoint."""
-    # Add payment context
-    rootsense.set_context("payment", {
-        "amount": payment.amount,
-        "currency": payment.currency,
-        "method": payment.method
-    })
-    
-    if payment.user_id:
-        rootsense.set_user(id=payment.user_id)
-    
-    rootsense.push_breadcrumb(
-        message="Payment processing started",
-        category="payment",
-        level="info",
-        data={"amount": payment.amount}
-    )
-    
-    # Validate payment
-    if payment.amount > 10000:
-        rootsense.push_breadcrumb(
-            message="Payment exceeds limit",
-            category="validation",
-            level="error"
-        )
-        raise HTTPException(
-            status_code=400,
-            detail="Payment amount exceeds limit"
-        )
-    
-    # Simulate async payment processing
-    await asyncio.sleep(random.uniform(0.1, 0.5))
-    
-    # Random payment failures
-    if random.random() < 0.1:  # 10% failure rate
-        rootsense.push_breadcrumb(
-            message="Payment gateway error",
-            category="payment",
-            level="error"
-        )
-        raise HTTPException(
-            status_code=502,
-            detail="Payment gateway connection failed"
-        )
-    
-    transaction_id = f"txn_{int(time.time())}"
-    
-    return PaymentResponse(
-        status="success",
-        transaction_id=transaction_id,
-        amount=payment.amount,
-        message="Payment processed successfully"
-    )
-
-
-@app.get("/slow")
+@app.get("/api/slow")
 async def slow_endpoint():
-    """Endpoint with deliberate slowness."""
-    rootsense.push_breadcrumb(
-        message="Starting slow async operation",
-        category="performance",
-        level="info"
-    )
+    """Slow endpoint - demonstrates performance monitoring."""
+    with tracer.trace("slow_operation") as span:
+        await asyncio.sleep(2)  # Simulate slow operation
+        span.set_tag("duration", 2.0)
+        
+    return {"message": "Slow operation completed"}
+
+
+@app.post("/api/users")
+async def create_user(user: User):
+    """Create user - demonstrates request body tracking."""
+    from rootsense.context import set_tag
     
-    # Simulate slow async operation
-    duration = random.uniform(1, 3)
-    await asyncio.sleep(duration)
-    
-    rootsense.set_tag("slow_operation", "true")
-    rootsense.set_context("performance", {
-        "duration_seconds": duration
-    })
+    set_tag("user.id", user.id)
+    set_tag("user.username", user.username)
     
     return {
-        "message": "Slow operation completed",
-        "duration": duration
+        "message": "User created successfully",
+        "user": user.dict()
     }
-
-
-async def slow_background_task(task_id: str):
-    """Simulated background task that may fail."""
-    try:
-        rootsense.push_breadcrumb(
-            message=f"Background task {task_id} started",
-            category="background_task",
-            level="info"
-        )
-        
-        await asyncio.sleep(2)
-        
-        # Random failures
-        if random.random() < 0.3:
-            raise RuntimeError(f"Background task {task_id} failed!")
-        
-        rootsense.push_breadcrumb(
-            message=f"Background task {task_id} completed",
-            category="background_task",
-            level="info"
-        )
-    except Exception as e:
-        rootsense.capture_exception(e)
-
-
-@app.post("/background-task")
-async def create_background_task(background_tasks: BackgroundTasks):
-    """Create a background task."""
-    task_id = f"task_{int(time.time())}"
-    
-    rootsense.set_tag("background_task_id", task_id)
-    background_tasks.add_task(slow_background_task, task_id)
-    
-    return {
-        "message": "Background task created",
-        "task_id": task_id
-    }
-
-
-@app.get("/database-error")
-async def database_error():
-    """Simulate database connection error."""
-    rootsense.push_breadcrumb(
-        message="Attempting async database connection",
-        category="database",
-        level="info"
-    )
-    
-    await asyncio.sleep(0.1)
-    
-    rootsense.push_breadcrumb(
-        message="Database connection timeout",
-        category="database",
-        level="error",
-        data={"timeout": 30}
-    )
-    
-    raise HTTPException(
-        status_code=503,
-        detail="Database connection pool exhausted"
-    )
-
-
-@app.get("/nested-async-error")
-async def nested_async_error():
-    """Error in nested async calls."""
-    async def level1():
-        rootsense.push_breadcrumb(message="Async Level 1", category="trace", level="debug")
-        await asyncio.sleep(0.01)
-        return await level2()
-    
-    async def level2():
-        rootsense.push_breadcrumb(message="Async Level 2", category="trace", level="debug")
-        await asyncio.sleep(0.01)
-        return await level3()
-    
-    async def level3():
-        rootsense.push_breadcrumb(message="Async Level 3 - Error!", category="trace", level="error")
-        raise RuntimeError("Error in nested async function at level 3")
-    
-    return await level1()
-
-
-@app.middleware("http")
-async def add_custom_context(request: Request, call_next):
-    """Add custom context to each request."""
-    # Add request ID
-    request_id = request.headers.get("X-Request-ID", f"req_{int(time.time())}")
-    rootsense.set_tag("request_id", request_id)
-    
-    # Add user agent info
-    if "user-agent" in request.headers:
-        rootsense.set_tag("user_agent", request.headers["user-agent"][:100])
-    
-    # Process request
-    response = await call_next(request)
-    
-    # Add response status
-    rootsense.set_tag("response_status", response.status_code)
-    
-    return response
-
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    """Custom handler for HTTP exceptions."""
-    # These are already captured by RootSense middleware
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"error": exc.detail}
-    )
-
-
-@app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    """Custom handler for general exceptions."""
-    # Already captured by RootSense middleware
-    return JSONResponse(
-        status_code=500,
-        content={"error": "Internal server error"}
-    )
 
 
 if __name__ == "__main__":
     import uvicorn
-    
-    print("Starting FastAPI app with RootSense integration...")
-    print("Visit http://localhost:8000/docs for Swagger UI")
-    print("Prometheus metrics available at http://localhost:8000/metrics")
-    
-    uvicorn.run(
-        "fastapi_app:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8000)
