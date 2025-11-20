@@ -1,30 +1,28 @@
 # RootSense Python SDK
 
-[![Python Version](https://img.shields.io/pypi/pyversions/rootsense)](https://pypi.org/project/rootsense/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![PyPI version](https://badge.fury.io/py/rootsense.svg)](https://badge.fury.io/py/rootsense)
+[![Python versions](https://img.shields.io/pypi/pyversions/rootsense.svg)](https://pypi.org/project/rootsense/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Python SDK for [RootSense](https://rootsense.ai) - AI-powered incident management and error tracking platform that automatically detects, analyzes, and provides actionable recommendations for production issues.
+Python SDK for RootSense - AI-powered incident management and error tracking platform.
 
 ## Features
 
-- 🚨 **Automatic Error Tracking** - Capture and report exceptions with full stack traces
-- 📊 **Prometheus Integration** - Built-in metrics collection and monitoring
-- 🔍 **Rich Context** - Automatic capture of request data, user info, and custom context
-- 🛡️ **PII Protection** - Configurable data sanitization to protect sensitive information
-- ⚡ **Async Transport** - Non-blocking error reporting with buffering and retry logic
-- 🔌 **Framework Support** - Native integrations for Flask, FastAPI, and Django
-- 🎯 **Fingerprinting** - Smart error grouping based on stack traces and context
-- 💾 **Buffered Delivery** - Reliable event delivery with automatic retries
+- 🚨 **Automatic Error Tracking**: Capture exceptions and errors automatically
+- 📊 **Performance Monitoring**: Track request timing, database queries, and custom operations
+- 🔍 **Distributed Tracing**: Monitor requests across microservices
+- 🎯 **Context Enrichment**: Automatic user, request, and environment context
+- 🔌 **Framework Integrations**: Native support for Flask, FastAPI, Django, and more
+- ⚡ **Async Support**: Full async/await support for modern Python applications
+- 🛡️ **PII Protection**: Built-in data sanitization and sensitive data redaction
 
 ## Installation
-
-### Basic Installation
 
 ```bash
 pip install rootsense
 ```
 
-### With Framework Support
+### Framework-Specific Installation
 
 ```bash
 # For Flask
@@ -42,139 +40,192 @@ pip install rootsense[dev]
 
 ## Quick Start
 
-### 1. Initialize the SDK
+### Basic Usage
 
 ```python
 import rootsense
 
+# Initialize RootSense
 rootsense.init(
     api_key="your-api-key",
     project_id="your-project-id",
     environment="production"
 )
-```
 
-### 2. Capture Exceptions
-
-```python
+# Capture an exception
 try:
-    # Your code here
-    result = risky_operation()
+    1 / 0
 except Exception as e:
     rootsense.capture_exception(e)
-    # Handle the exception
+
+# Capture a message
+rootsense.capture_message("User login successful", level="info")
 ```
 
-### 3. Add Context
+### Flask Integration
 
 ```python
-# Set user information
-rootsense.set_user(
-    id="user-123",
-    email="user@example.com",
-    username="johndoe"
+from flask import Flask
+import rootsense
+from rootsense.integrations.flask import capture_flask_errors
+
+app = Flask(__name__)
+
+# Initialize RootSense
+rootsense.init(
+    api_key="your-api-key",
+    project_id="your-project-id"
 )
 
+# Add RootSense middleware
+capture_flask_errors(app)
+
+@app.route("/")
+def index():
+    return "Hello World!"
+```
+
+### FastAPI Integration
+
+```python
+from fastapi import FastAPI
+import rootsense
+from rootsense.integrations.fastapi import capture_fastapi_errors
+
+app = FastAPI()
+
+# Initialize RootSense
+rootsense.init(
+    api_key="your-api-key",
+    project_id="your-project-id"
+)
+
+# Add RootSense middleware
+capture_fastapi_errors(app)
+
+@app.get("/")
+async def read_root():
+    return {"message": "Hello World"}
+```
+
+### Django Integration
+
+```python
+# In your settings.py
+
+from rootsense.integrations.django import init_django
+
+# Initialize RootSense
+init_django(
+    api_key="your-api-key",
+    project_id="your-project-id",
+    environment="production"
+)
+
+# Add middleware
+MIDDLEWARE = [
+    # ... other middleware
+    'rootsense.integrations.django.DjangoMiddleware',
+]
+```
+
+## Advanced Features
+
+### Performance Monitoring
+
+```python
+from rootsense.performance import PerformanceMonitor, track_performance
+
+monitor = PerformanceMonitor()
+
+# Using context manager
+with monitor.track("database_query", query_type="SELECT"):
+    # Your code here
+    result = db.query("SELECT * FROM users")
+
+# Using decorator
+@track_performance("api_call", service="external_api")
+def call_external_api():
+    # API call code
+    pass
+```
+
+### Distributed Tracing
+
+```python
+from rootsense.tracing import get_tracer, trace_function
+
+tracer = get_tracer()
+
+# Using context manager
+with tracer.trace("user_service.get_user") as span:
+    user = get_user_from_db(user_id)
+    span.set_tag("user_id", user_id)
+    span.set_tag("found", user is not None)
+
+# Using decorator
+@trace_function("payment_service.process_payment")
+def process_payment(amount, currency):
+    # Payment processing code
+    pass
+```
+
+### Database Monitoring
+
+```python
+from rootsense.performance import DatabaseMonitor
+
+db_monitor = DatabaseMonitor()
+
+with db_monitor.track_query(
+    "SELECT * FROM users WHERE id = %s",
+    operation="SELECT",
+    database="main"
+):
+    result = cursor.execute(query, (user_id,))
+
+# Get statistics
+stats = db_monitor.get_stats()
+print(f"Total queries: {stats['query_count']}")
+print(f"Average time: {stats['average_time']:.2f}s")
+```
+
+### Context Management
+
+```python
+from rootsense import set_user, set_tag, set_context, push_breadcrumb
+
+# Set user context
+set_user({
+    "id": "user-123",
+    "email": "user@example.com",
+    "username": "john_doe"
+})
+
 # Add custom tags
-rootsense.set_tag("payment_type", "credit_card")
-rootsense.set_tag("plan", "premium")
+set_tag("environment", "production")
+set_tag("version", "1.2.3")
+
+# Add custom context
+set_context("payment", {
+    "amount": 99.99,
+    "currency": "USD",
+    "payment_method": "credit_card"
+})
 
 # Add breadcrumbs for debugging
-rootsense.push_breadcrumb(
-    message="User clicked checkout",
-    category="navigation",
+push_breadcrumb(
+    category="auth",
+    message="User logged in",
     level="info"
 )
 ```
 
-## Framework Integrations
-
-### Flask
-
-```python
-from flask import Flask
-from rootsense.integrations.flask import RootSenseFlask
-
-app = Flask(__name__)
-
-# Initialize RootSense for Flask
-RootSenseFlask(
-    app,
-    api_key="your-api-key",
-    project_id="your-project-id",
-    environment="production"
-)
-
-@app.route("/")
-def hello():
-    return "Hello World!"
-
-if __name__ == "__main__":
-    app.run()
-```
-
-### FastAPI
-
-```python
-from fastapi import FastAPI
-from rootsense.integrations.fastapi import RootSenseFastAPI
-
-app = FastAPI()
-
-# Initialize RootSense for FastAPI
-RootSenseFastAPI(
-    app,
-    api_key="your-api-key",
-    project_id="your-project-id",
-    environment="production"
-)
-
-@app.get("/")
-async def root():
-    return {"message": "Hello World"}
-```
-
-### Django
-
-Add to your `settings.py`:
-
-```python
-MIDDLEWARE = [
-    # ... other middleware
-    'rootsense.integrations.django.RootSenseDjangoMiddleware',
-]
-
-ROOTSENSE = {
-    'api_key': 'your-api-key',
-    'project_id': 'your-project-id',
-    'environment': 'production',
-    'send_default_pii': False,
-}
-```
-
-## Configuration Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `api_key` | str | **Required** | Your RootSense API key |
-| `project_id` | str | **Required** | Your project ID |
-| `api_url` | str | `https://api.rootsense.ai` | RootSense API endpoint |
-| `environment` | str | `production` | Environment name (production, staging, etc.) |
-| `release` | str | `None` | Application version/release |
-| `server_name` | str | Auto-detected | Server hostname |
-| `enable_prometheus` | bool | `True` | Enable Prometheus metrics collection |
-| `send_default_pii` | bool | `False` | Automatically send PII (emails, IPs, usernames) |
-| `max_breadcrumbs` | int | `100` | Maximum number of breadcrumbs to store |
-| `sample_rate` | float | `1.0` | Sample rate for events (0.0 to 1.0) |
-| `debug` | bool | `False` | Enable debug logging |
-| `buffer_size` | int | `1000` | Maximum events in buffer before dropping |
-| `flush_interval` | float | `5.0` | Seconds between buffer flushes |
-| `max_retries` | int | `3` | Maximum retry attempts for failed requests |
-| `timeout` | float | `10.0` | Request timeout in seconds |
+## Configuration
 
 ### Environment Variables
 
-You can also configure the SDK using environment variables:
+You can configure RootSense using environment variables:
 
 ```bash
 export ROOTSENSE_API_KEY="your-api-key"
@@ -183,185 +234,69 @@ export ROOTSENSE_ENVIRONMENT="production"
 export ROOTSENSE_DEBUG="false"
 ```
 
-## Advanced Usage
-
-### Manual Client Management
+Then initialize without parameters:
 
 ```python
-from rootsense import RootSenseClient
-from rootsense.config import Config
-
-config = Config(
-    api_key="your-api-key",
-    project_id="your-project-id",
-    environment="production"
-)
-
-client = RootSenseClient(config)
-
-try:
-    # Your code
-    pass
-except Exception as e:
-    client.capture_exception(e)
-finally:
-    client.close()
-```
-
-### Context Managers
-
-```python
-with rootsense.configure_scope() as scope:
-    scope.set_tag("transaction_id", "txn-12345")
-    scope.set_context("payment", {
-        "amount": 99.99,
-        "currency": "USD"
-    })
-    
-    # Any errors here will include this context
-    process_payment()
-```
-
-### Custom Fingerprinting
-
-```python
-rootsense.capture_exception(
-    exception,
-    fingerprint=["custom", "grouping", "key"]
-)
-```
-
-### Capture Messages
-
-```python
-# Log a message with level
-rootsense.capture_message(
-    "Payment processed successfully",
-    level="info",
-    extra={"transaction_id": "txn-12345"}
-)
-```
-
-## Prometheus Metrics
-
-When `enable_prometheus=True`, the SDK automatically collects:
-
-- **Request metrics**: `http_requests_total`, `http_request_duration_seconds`
-- **Error metrics**: `errors_total`, `error_rate`
-- **System metrics**: `process_cpu_seconds_total`, `process_resident_memory_bytes`
-
-Access metrics at `/metrics` endpoint (framework-dependent).
-
-## Best Practices
-
-### 1. Initialize Early
-
-Initialize RootSense as early as possible in your application lifecycle:
-
-```python
-# In your main application file
 import rootsense
 
-rootsense.init(api_key="...", project_id="...")
-
-# Then import your application code
-from myapp import create_app
+rootsense.init()  # Reads from environment variables
 ```
 
-### 2. Use Context Wisely
-
-Add context that helps diagnose issues:
-
-```python
-rootsense.set_user(id=user.id, email=user.email)
-rootsense.set_tag("feature_flag", get_feature_flag())
-rootsense.set_tag("ab_test_variant", get_variant())
-```
-
-### 3. Sanitize Sensitive Data
+### Configuration Options
 
 ```python
 rootsense.init(
-    api_key="...",
-    project_id="...",
-    send_default_pii=False,  # Don't send PII by default
-    before_send=lambda event: sanitize_event(event)
+    api_key="your-api-key",              # Required: Your API key
+    project_id="your-project-id",        # Required: Your project ID
+    environment="production",             # Optional: Environment name
+    backend_url="https://api.rootsense.ai",  # Optional: Backend URL
+    debug=False,                          # Optional: Enable debug logging
+    enable_prometheus=True,               # Optional: Enable Prometheus metrics
+    send_default_pii=False,               # Optional: Send PII by default
+    sample_rate=1.0,                      # Optional: Error sampling rate (0.0-1.0)
+    max_breadcrumbs=100,                  # Optional: Max breadcrumbs to store
+    buffer_size=1000,                     # Optional: Event buffer size
 )
-```
-
-### 4. Use Sampling in High-Traffic Apps
-
-```python
-rootsense.init(
-    api_key="...",
-    project_id="...",
-    sample_rate=0.1  # Sample 10% of events
-)
-```
-
-### 5. Close on Shutdown
-
-Ensure events are flushed on application shutdown:
-
-```python
-import atexit
-from rootsense import get_client
-
-def cleanup():
-    client = get_client()
-    if client:
-        client.close()
-
-atexit.register(cleanup)
 ```
 
 ## Examples
 
-See the [`examples/`](examples/) directory for complete working examples:
+See the [examples](./examples) directory for complete working examples:
 
-- [Flask application](examples/flask_app.py)
-- [FastAPI application](examples/fastapi_app.py)
-- [Django application](examples/django_app/)
-- [Basic usage](examples/basic_usage.py)
-- [Advanced features](examples/advanced_usage.py)
+- [Flask Example](./examples/flask_app.py)
+- [FastAPI Example](./examples/fastapi_app.py)
+- [Django Example](./examples/django_app/)
+- [Performance Monitoring](./examples/performance_example.py)
+- [Distributed Tracing](./examples/tracing_example.py)
 
-## Troubleshooting
+## Testing
 
-### Events Not Appearing
+Run tests with pytest:
 
-1. **Check API credentials**: Verify your API key and project ID
-2. **Enable debug mode**: Set `debug=True` to see SDK logs
-3. **Check network**: Ensure your application can reach `api.rootsense.ai`
-4. **Verify initialization**: Make sure `rootsense.init()` is called before errors occur
+```bash
+pip install rootsense[dev]
+pytest
 
-### High Memory Usage
-
-1. **Reduce buffer size**: Set a lower `buffer_size`
-2. **Increase flush interval**: Flush more frequently with lower `flush_interval`
-3. **Enable sampling**: Use `sample_rate` to reduce event volume
-
-### Missing Context
-
-1. **Initialize client early**: Call `init()` at application startup
-2. **Set context before errors**: Context must be set before exception occurs
-3. **Check scope**: Context is thread-local by default
+# With coverage
+pytest --cov=rootsense --cov-report=html
+```
 
 ## Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## Support
-
-- 📧 Email: support@rootsense.ai
-- 💬 Slack: [Join our community](https://rootsense.ai/slack)
-- 📖 Documentation: [docs.rootsense.ai](https://docs.rootsense.ai)
-- 🐛 Issues: [GitHub Issues](https://github.com/paschmaria/rootsense-python-sdk/issues)
+Contributions are welcome! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
 
-## Related Projects
+## Links
 
-- [RootSense Node.js SDK](https://github.com/paschmaria/rootsense-node-sdk)
-- [RootSense Platform](https://rootsense.ai)
+- [Documentation](https://docs.rootsense.ai)
+- [Homepage](https://rootsense.ai)
+- [PyPI](https://pypi.org/project/rootsense/)
+- [GitHub](https://github.com/paschmaria/rootsense-python-sdk)
+- [Issues](https://github.com/paschmaria/rootsense-python-sdk/issues)
+
+## Support
+
+For support, email support@rootsense.ai or join our [Discord community](https://discord.gg/rootsense).
