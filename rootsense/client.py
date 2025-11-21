@@ -6,7 +6,6 @@ import threading
 from typing import Any, Dict, Optional
 
 from rootsense.config import Config
-from rootsense.collectors.prometheus_collector import PrometheusCollector
 from rootsense.collectors.error_collector import ErrorCollector
 from rootsense.transport.http_transport import HttpTransport
 from rootsense.transport.websocket_transport import WebSocketTransport
@@ -24,17 +23,20 @@ class RootSenseClient:
         self._initialized = False
        
         # Initialize components
-        self.sanitizer = Sanitizer(send_default_pii=config.send_default_pii)
-        self.http_transport = HttpTransport(config)
-        self.ws_transport = WebSocketTransport(config)
-       
-        # Initialize collectors
-        if config.enable_prometheus:
-            self.prometheus_collector = PrometheusCollector(config)
+        self.sanitizer = Sanitizer(sanitize_pii=config.sanitize_pii)
+        
+        # Initialize transport based on config
+        if config.transport_type == "websocket":
+            self.transport = WebSocketTransport(config)
+            self.ws_transport = self.transport
+            self.http_transport = None
         else:
-            self.prometheus_collector = None
-           
-        self.error_collector = ErrorCollector(config, self.http_transport)
+            self.transport = HttpTransport(config)
+            self.http_transport = self.transport
+            self.ws_transport = None
+       
+        # Initialize error collector (includes metrics)
+        self.error_collector = ErrorCollector(config, self.transport)
        
         # Start background workers
         self._start()
@@ -45,12 +47,16 @@ class RootSenseClient:
         self._initialized = True
         
         if config.debug:
-            logger.info(f"RootSense initialized for project {config.project_id}")
+            logger.info(
+                f"RootSense initialized for project {config.project_id} "
+                f"using {config.transport_type} transport"
+            )
 
     def _start(self):
         """Start background workers."""
         self.error_collector.start()
-        self.ws_transport.start()
+        if self.ws_transport:
+            self.ws_transport.start()
 
     def capture_exception(
         self,
@@ -62,11 +68,19 @@ class RootSenseClient:
        
         Args:
             exception: The exception to capture
-            context: Additional context
+            context: Additional context (service, endpoint, etc.)
             **kwargs: Additional metadata
            
         Returns:
             Event ID if captured, None otherwise
+            
+        Example:
+            >>> import rootsense
+            >>> rootsense.init(api_key="...", project_id="...")
+            >>> try:
+            ...     1 / 0
+            ... except Exception as e:
+            ...     event_id = rootsense.capture_exception(e)
         """
         return self.error_collector.capture_exception(exception, context, **kwargs)
 
@@ -87,6 +101,11 @@ class RootSenseClient:
            
         Returns:
             Event ID if captured, None otherwise
+            
+        Example:
+            >>> import rootsense
+            >>> rootsense.init(api_key="...", project_id="...")
+            >>> rootsense.capture_message("User logged in", level="info")
         """
         return self.error_collector.capture_message(message, level, context, **kwargs)
 
@@ -97,7 +116,8 @@ class RootSenseClient:
            
         try:
             self.error_collector.flush(timeout=5)
-            self.ws_transport.close()
+            if self.ws_transport:
+                self.ws_transport.close()
             self._initialized = False
            
             if self.config.debug:
