@@ -1,112 +1,189 @@
-"""Complete example showing all RootSense features."""
+"""Complete example showing RootSense with OpenTelemetry auto-instrumentation.
+
+This example demonstrates:
+1. SDK initialization with auto-instrumentation
+2. Automatic error detection and capture
+3. Auto-resolution when operations recover
+4. Database query tracking (automatic)
+5. HTTP request tracking (automatic)
+6. Redis operation tracking (automatic)
+"""
 
 import time
+import logging
 import rootsense
-from rootsense.context import set_user, set_tag, add_breadcrumb, set_context
-from rootsense.performance import PerformanceMonitor, DatabaseMonitor
 
-# Initialize RootSense
+# Enable debug logging to see what's happening
+logging.basicConfig(level=logging.INFO)
+
+# Initialize RootSense with auto-instrumentation
+print("\n=== Initializing RootSense ===")
 rootsense.init(
-    connection_string="rootsense://your-api-key@api.rootsense.ai/your-project-id",
-    environment="production",
-    debug=True,
-    sanitize_pii=True
+    api_key="demo-api-key",
+    project_id="demo-project",
+    environment="development",
+    service_name="demo-app",
+    service_version="1.0.0",
+    enable_auto_instrumentation=True,  # Enables OpenTelemetry
+    debug=True  # See what's being captured
 )
 
-# Set user context
-set_user({
-    "id": "user-123",
-    "email": "john@example.com",
-    "username": "john_doe"
-})
+print("\u2705 RootSense initialized with auto-instrumentation")
+print("   - Django ORM queries: auto-tracked")
+print("   - SQLAlchemy queries: auto-tracked")
+print("   - HTTP requests (requests, httpx): auto-tracked")
+print("   - Redis operations: auto-tracked")
+print("   - Celery tasks: auto-tracked")
+print("   - Auto-resolution: enabled for all operation types")
 
-# Add tags
-set_tag("environment", "production")
-set_tag("version", "1.0.0")
-set_tag("region", "us-east-1")
 
-# Performance monitoring
-monitor = PerformanceMonitor()
-
-def simulate_database_query():
-    """Simulate a database query."""
-    db_monitor = DatabaseMonitor()
-    
-    with db_monitor.track_query(
-        "SELECT * FROM users WHERE id = %s",
-        operation="SELECT",
-        database="main"
-    ):
-        time.sleep(0.05)  # Simulate query time
-        add_breadcrumb("database", "Queried users table")
-
-def simulate_api_call():
-    """Simulate an external API call."""
-    with monitor.track("external_api", service="payment_gateway"):
-        time.sleep(0.1)  # Simulate API latency
-        add_breadcrumb("http", "Called payment API", {"endpoint": "/charge"})
-
-def simulate_payment_processing():
-    """Simulate payment processing."""
-    set_context("payment", {
-        "amount": 99.99,
-        "currency": "USD",
-        "method": "credit_card"
+# Example 1: Manual error capture
+print("\n=== Example 1: Manual Error Capture ===")
+try:
+    result = 1 / 0
+except ZeroDivisionError as e:
+    event_id = rootsense.capture_exception(e, context={
+        "operation": "division",
+        "user_id": "12345"
     })
-    
-    add_breadcrumb("business", "Processing payment", {"amount": 99.99})
-    
-    try:
-        # Simulate operations
-        simulate_database_query()
-        simulate_api_call()
-        
-        # Success
-        add_breadcrumb("business", "Payment successful")
-        rootsense.capture_message("Payment processed successfully", level="info")
-        
-    except Exception as e:
-        # Error
-        rootsense.capture_exception(e, context={
-            "service": "payment",
-            "operation": "process_payment"
-        })
+    print(f"✅ Error captured: {event_id}")
+    print(f"   Fingerprint: error:ZeroDivisionError:division")
+    print(f"   → Incident created in RootSense")
 
-def simulate_error():
-    """Simulate an error scenario."""
-    add_breadcrumb("navigation", "User initiated withdrawal")
-    
-    try:
-        # Simulate error
-        amount = 1000
-        balance = 500
-        
-        if amount > balance:
-            raise ValueError(f"Insufficient funds: requested {amount}, balance {balance}")
-            
-    except Exception as e:
-        rootsense.capture_exception(e, context={
-            "service": "banking",
-            "operation": "withdraw",
-            "amount": amount,
-            "balance": balance
-        })
 
-if __name__ == "__main__":
-    print("Running RootSense example...")
-    
-    # Successful operation
-    print("\n1. Simulating successful payment...")
-    simulate_payment_processing()
-    
-    # Error scenario
-    print("\n2. Simulating error scenario...")
-    simulate_error()
-    
-    # Flush and close
-    print("\n3. Flushing events...")
-    client = rootsense.get_client()
-    if client:
-        client.close()
-    
-    print("\nDone! Check your RootSense dashboard for events.")
+# Example 2: Simulated database error and recovery
+print("\n=== Example 2: Database Error & Auto-Resolution ===")
+
+print("\n📊 Simulating database connection error...")
+try:
+    # Simulate a database error
+    raise Exception("Database connection timeout: postgresql://db:5432")
+except Exception as e:
+    event_id = rootsense.capture_exception(e, context={
+        "operation_type": "db",
+        "database": "postgresql",
+        "query": "SELECT * FROM users",
+        "table": "users"
+    })
+    print(f"❌ Error captured: {event_id}")
+    print(f"   Fingerprint: db:postgresql:SELECT:users")
+    print(f"   → Incident created")
+
+print("\n⏳ Waiting 2 seconds (simulating fix deployment)...")
+time.sleep(2)
+
+print("\n✅ Simulating successful database query...")
+# In a real app with OpenTelemetry instrumentation, this would be automatic:
+# User.objects.all()  # Django
+# session.query(User).all()  # SQLAlchemy
+# Both would trigger success signals automatically!
+
+client = rootsense.get_client()
+if client:
+    # Manually send success signal (normally automatic via OpenTelemetry)
+    client.transport.send_success_signal(
+        fingerprint="db:postgresql:SELECT:users",
+        context={
+            "operation_type": "db",
+            "database": "postgresql",
+            "query": "SELECT * FROM users",
+            "success": True
+        }
+    )
+    print("✅ Success signal sent")
+    print("   → Incident will auto-resolve if consistently successful")
+
+
+# Example 3: HTTP endpoint error and recovery
+print("\n=== Example 3: HTTP Endpoint Error & Auto-Resolution ===")
+
+print("\n📊 Simulating HTTP 500 error...")
+try:
+    raise Exception("Internal server error on GET /api/users")
+except Exception as e:
+    event_id = rootsense.capture_exception(e, context={
+        "operation_type": "http",
+        "method": "GET",
+        "endpoint": "/api/users",
+        "status_code": 500
+    })
+    print(f"❌ Error captured: {event_id}")
+    print(f"   Fingerprint: http:GET:/api/users")
+    print(f"   → Incident created")
+
+print("\n⏳ Waiting 2 seconds (simulating fix deployment)...")
+time.sleep(2)
+
+print("\n✅ Simulating successful HTTP request...")
+# In a real app with Django/Flask/FastAPI:
+# Just accessing the endpoint would trigger success signal automatically!
+if client:
+    client.transport.send_success_signal(
+        fingerprint="http:GET:/api/users",
+        context={
+            "operation_type": "http",
+            "method": "GET",
+            "endpoint": "/api/users",
+            "status_code": 200,
+            "success": True
+        }
+    )
+    print("✅ Success signal sent")
+    print("   → Incident will auto-resolve")
+
+
+# Example 4: Redis operation error and recovery
+print("\n=== Example 4: Redis Error & Auto-Resolution ===")
+
+print("\n📊 Simulating Redis connection error...")
+try:
+    raise Exception("Redis connection refused: localhost:6379")
+except Exception as e:
+    event_id = rootsense.capture_exception(e, context={
+        "operation_type": "redis",
+        "command": "GET",
+        "key": "user:12345"
+    })
+    print(f"❌ Error captured: {event_id}")
+    print(f"   Fingerprint: redis:GET")
+    print(f"   → Incident created")
+
+print("\n⏳ Waiting 2 seconds (simulating Redis restart)...")
+time.sleep(2)
+
+print("\n✅ Simulating successful Redis operation...")
+# In a real app with redis-py:
+# r.get("user:12345")  # Automatically tracked and success signal sent!
+if client:
+    client.transport.send_success_signal(
+        fingerprint="redis:GET",
+        context={
+            "operation_type": "redis",
+            "command": "GET",
+            "success": True
+        }
+    )
+    print("✅ Success signal sent")
+    print("   → Incident will auto-resolve")
+
+
+# Show summary
+print("\n=== Summary ===")
+print("✨ RootSense captures errors and tracks recovery automatically!")
+print("")
+print("What happens automatically with auto-instrumentation:")
+print("  1. All errors captured with context")
+print("  2. Database queries tracked (Django ORM, SQLAlchemy)")
+print("  3. HTTP requests tracked (requests, httpx, urllib)")
+print("  4. Redis operations tracked")
+print("  5. Celery tasks tracked")
+print("  6. Success signals sent when operations recover")
+print("  7. Incidents auto-resolve when consistently successful")
+print("")
+print("No manual instrumentation needed! 🎉")
+
+# Clean shutdown
+print("\n=== Shutting Down ===")
+if client:
+    client.close()
+    print("✅ RootSense client closed")
