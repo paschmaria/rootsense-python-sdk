@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class HttpTransport:
-    """HTTP transport with retry logic."""
+    """HTTP transport with retry logic and exponential backoff."""
 
     def __init__(self, config):
         self.config = config
@@ -22,7 +22,10 @@ class HttpTransport:
 
     def send_events(self, events: List[Dict[str, Any]]) -> bool:
         """Send a batch of events with retry logic."""
-        url = f"{self.config.base_url}/events/batch"
+        if not events:
+            return True
+            
+        url = f"{self.config.events_endpoint}/batch"
        
         for attempt in range(3):
             try:
@@ -33,20 +36,19 @@ class HttpTransport:
                 )
                
                 if response.status_code == 200:
+                    if self.config.debug:
+                        logger.debug(f"Successfully sent {len(events)} events")
                     return True
                
                 if response.status_code < 500:
-                    # Client error, don't retry
-                    logger.error(f"Client error sending events: {response.status_code} {response.text}")
+                    logger.error(f"Client error: {response.status_code}")
                     return False
                
-                # Server error, retry
                 logger.warning(f"Server error (attempt {attempt + 1}/3): {response.status_code}")
                
             except requests.RequestException as e:
                 logger.error(f"Request error (attempt {attempt + 1}/3): {e}")
            
-            # Exponential backoff
             if attempt < 2:
                 time.sleep(2 ** attempt)
        
@@ -54,7 +56,7 @@ class HttpTransport:
 
     def send_success_signal(self, fingerprint: str, context: Dict[str, Any]) -> bool:
         """Send success signal for auto-resolution."""
-        url = f"{self.config.base_url}/events/success"
+        url = f"{self.config.events_endpoint}/success"
        
         try:
             response = self.session.post(
@@ -68,5 +70,10 @@ class HttpTransport:
             )
             return response.status_code == 200
         except requests.RequestException as e:
-            logger.error(f"Error sending success signal: {e}")
+            if self.config.debug:
+                logger.debug(f"Error sending success signal: {e}")
             return False
+
+    def close(self):
+        """Close the HTTP session."""
+        self.session.close()
