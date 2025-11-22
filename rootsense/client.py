@@ -8,7 +8,6 @@ from typing import Any, Dict, Optional
 from rootsense.config import Config
 from rootsense.collectors.error_collector import ErrorCollector
 from rootsense.transport.http_transport import HttpTransport
-from rootsense.transport.websocket_transport import WebSocketTransport
 from rootsense.utils.sanitizer import Sanitizer
 
 logger = logging.getLogger(__name__)
@@ -25,15 +24,8 @@ class RootSenseClient:
         # Initialize components
         self.sanitizer = Sanitizer(sanitize_pii=config.sanitize_pii)
         
-        # Initialize transport based on config
-        if config.transport_type == "websocket":
-            self.transport = WebSocketTransport(config)
-            self.ws_transport = self.transport
-            self.http_transport = None
-        else:
-            self.transport = HttpTransport(config)
-            self.http_transport = self.transport
-            self.ws_transport = None
+        # Initialize HTTP transport
+        self.transport = HttpTransport(config)
        
         # Initialize error collector (includes metrics)
         self.error_collector = ErrorCollector(config, self.transport)
@@ -49,14 +41,12 @@ class RootSenseClient:
         if config.debug:
             logger.info(
                 f"RootSense initialized for project {config.project_id} "
-                f"using {config.transport_type} transport"
+                f"using HTTP transport"
             )
 
     def _start(self):
         """Start background workers."""
         self.error_collector.start()
-        if self.ws_transport:
-            self.ws_transport.start()
 
     def capture_exception(
         self,
@@ -116,8 +106,6 @@ class RootSenseClient:
            
         try:
             self.error_collector.flush(timeout=5)
-            if self.ws_transport:
-                self.ws_transport.close()
             self._initialized = False
            
             if self.config.debug:

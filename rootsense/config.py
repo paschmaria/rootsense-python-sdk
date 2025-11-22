@@ -16,7 +16,6 @@ class Config:
         backend_url: Optional[str] = None,
         connection_string: Optional[str] = None,
         environment: str = "production",
-        transport_type: str = "http",
         sample_rate: float = 1.0,
         debug: bool = False,
         sanitize_pii: bool = True,
@@ -31,7 +30,6 @@ class Config:
             backend_url: RootSense backend URL (default: https://api.rootsense.ai)
             connection_string: Alternative format: rootsense://API_KEY@HOST/PROJECT_ID
             environment: Environment name (production, staging, development, etc.)
-            transport_type: Transport type ('http' or 'websocket')
             sample_rate: Error sampling rate (0.0-1.0)
             debug: Enable debug logging
             sanitize_pii: Automatically sanitize PII in requests/responses (default: True)
@@ -65,7 +63,6 @@ class Config:
         self.project_id = project_id
         self.backend_url = backend_url.rstrip('/')
         self.environment = environment
-        self.transport_type = transport_type
         self.sample_rate = sample_rate
         self.debug = debug
         self.sanitize_pii = sanitize_pii
@@ -75,7 +72,6 @@ class Config:
         # Construct API endpoints
         self.events_endpoint = f"{self.backend_url}/v1/projects/{self.project_id}/events"
         self.traces_endpoint = f"{self.backend_url}/v1/projects/{self.project_id}/traces"
-        self.ws_endpoint = f"{self.backend_url.replace('https://', 'wss://').replace('http://', 'ws://')}/v1/projects/{self.project_id}/stream"
 
     def _parse_connection_string(self, connection_string: str):
         """Parse RootSense connection string.
