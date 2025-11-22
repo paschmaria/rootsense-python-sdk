@@ -1,4 +1,4 @@
-"""Context management for enriching events."""
+"""Thread-local context management."""
 
 import threading
 from collections import deque
@@ -6,25 +6,24 @@ from typing import Any, Dict, Optional
 
 
 class Context:
-    """Thread-local context for events."""
+    """Thread-local context for storing request-scoped data."""
 
-    def __init__(self, max_breadcrumbs: int = 100):
-        self.max_breadcrumbs = max_breadcrumbs
+    def __init__(self):
         self._local = threading.local()
 
     def _get_context(self) -> Dict[str, Any]:
-        """Get thread-local context."""
+        """Get or create context for current thread."""
         if not hasattr(self._local, 'context'):
             self._local.context = {
                 'tags': {},
                 'extra': {},
                 'user': {},
-                'breadcrumbs': deque(maxlen=self.max_breadcrumbs)
+                'breadcrumbs': deque(maxlen=100)
             }
         return self._local.context
 
     def set_tag(self, key: str, value: Any):
-        """Set a tag."""
+        """Set a tag on the current context."""
         context = self._get_context()
         context['tags'][key] = value
 
@@ -54,8 +53,8 @@ class Context:
         }
         context['breadcrumbs'].append(breadcrumb)
 
-    def get_context(self) -> Dict[str, Any]:
-        """Get current context."""
+    def get_all(self) -> Dict[str, Any]:
+        """Get all context data for current thread."""
         context = self._get_context()
         return {
             'tags': context['tags'].copy(),
@@ -95,8 +94,8 @@ def push_breadcrumb(message: str, category: str = "default", level: str = "info"
 
 
 def get_context() -> Dict[str, Any]:
-    """Get current context."""
-    return _context.get_context()
+    """Get current context - used internally by error collector."""
+    return _context.get_all()
 
 
 def clear_context():

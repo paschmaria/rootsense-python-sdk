@@ -51,22 +51,3 @@ class HttpTransport:
                 time.sleep(2 ** attempt)
        
         return False
-
-    def send_success_signal(self, fingerprint: str, context: Dict[str, Any]) -> bool:
-        """Send success signal for auto-resolution."""
-        url = f"{self.config.base_url}/events/success"
-       
-        try:
-            response = self.session.post(
-                url,
-                json={
-                    "fingerprint": fingerprint,
-                    "context": context,
-                    "project_id": self.config.project_id
-                },
-                timeout=5
-            )
-            return response.status_code == 200
-        except requests.RequestException as e:
-            logger.error(f"Error sending success signal: {e}")
-            return False

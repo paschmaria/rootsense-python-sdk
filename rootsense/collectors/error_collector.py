@@ -1,4 +1,4 @@
-"""Error event collector and buffer."""
+"""Error event collector with integrated metrics."""
 
 import hashlib
 import logging
@@ -10,11 +10,17 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+try:
+    from prometheus_client import Counter, Histogram, Gauge
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
 class ErrorCollector:
-    """Collects and buffers error events."""
+    """Collects and buffers error events with integrated Prometheus metrics."""
 
     def __init__(self, config, http_transport):
         self.config = config
@@ -23,6 +29,33 @@ class ErrorCollector:
         self._worker_thread = None
         self._stop_event = threading.Event()
         self._local = threading.local()
+       
+        # Initialize Prometheus metrics if available
+        if PROMETHEUS_AVAILABLE:
+            self._init_metrics()
+        else:
+            self._metrics_enabled = False
+
+    def _init_metrics(self):
+        """Initialize Prometheus metrics."""
+        try:
+            self.error_count = Counter(
+                'rootsense_errors_total',
+                'Total number of errors captured',
+                ['error_type', 'environment']
+            )
+            self.event_queue_size = Gauge(
+                'rootsense_event_queue_size',
+                'Current size of the event queue'
+            )
+            self.batch_send_duration = Histogram(
+                'rootsense_batch_send_duration_seconds',
+                'Time taken to send event batches'
+            )
+            self._metrics_enabled = True
+        except Exception as e:
+            logger.warning(f"Failed to initialize Prometheus metrics: {e}")
+            self._metrics_enabled = False
 
     def start(self):
         """Start the background worker."""
@@ -40,6 +73,10 @@ class ErrorCollector:
                 try:
                     event = self._queue.get(timeout=0.5)
                     batch.append(event)
+                   
+                    # Update queue size metric
+                    if self._metrics_enabled:
+                        self.event_queue_size.set(self._queue.qsize())
                 except queue.Empty:
                     pass
                
@@ -67,8 +104,14 @@ class ErrorCollector:
             return
            
         try:
-            self.http_transport.send_events(batch)
-            if self.config.debug:
+            # Track batch send duration
+            if self._metrics_enabled:
+                with self.batch_send_duration.time():
+                    success = self.http_transport.send_events(batch)
+            else:
+                success = self.http_transport.send_events(batch)
+               
+            if success and self.config.debug:
                 logger.debug(f"Sent batch of {len(batch)} events")
         except Exception as e:
             logger.error(f"Failed to send batch: {e}")
@@ -81,12 +124,20 @@ class ErrorCollector:
     ) -> Optional[str]:
         """Capture an exception."""
         event_id = str(uuid.uuid4())
+        error_type = type(exception).__name__
+       
+        # Update metrics
+        if self._metrics_enabled:
+            self.error_count.labels(
+                error_type=error_type,
+                environment=self.config.environment
+            ).inc()
        
         event = {
             "event_id": event_id,
             "timestamp": datetime.utcnow().isoformat(),
             "type": "error",
-            "exception_type": type(exception).__name__,
+            "exception_type": error_type,
             "message": str(exception),
             "stack_trace": traceback.format_exc(),
             "fingerprint": self._generate_fingerprint(exception, context),
@@ -102,6 +153,8 @@ class ErrorCollector:
         # Add to queue
         try:
             self._queue.put_nowait(event)
+            if self._metrics_enabled:
+                self.event_queue_size.set(self._queue.qsize())
         except queue.Full:
             logger.warning("Event queue is full, dropping event")
             return None
@@ -135,6 +188,8 @@ class ErrorCollector:
        
         try:
             self._queue.put_nowait(event)
+            if self._metrics_enabled:
+                self.event_queue_size.set(self._queue.qsize())
         except queue.Full:
             logger.warning("Event queue is full, dropping event")
             return None

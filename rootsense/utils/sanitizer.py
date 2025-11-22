@@ -5,92 +5,55 @@ from typing import Any, Dict, List
 
 
 class Sanitizer:
-    """Sanitizes sensitive data from requests and responses."""
+    """Sanitize PII from data before sending."""
 
-    SENSITIVE_KEYS = [
-        "password", "passwd", "pwd",
-        "secret", "api_key", "apikey", "token", "auth",
-        "authorization", "cookie", "session",
-        "credit_card", "card_number", "cvv", "ssn",
-        "private_key", "access_token", "refresh_token"
-    ]
-   
-    # Regex patterns for PII
-    EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
-    PHONE_PATTERN = re.compile(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b')
-    SSN_PATTERN = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
-    CREDIT_CARD_PATTERN = re.compile(r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b')
+    # Common PII patterns
+    PATTERNS = {
+        'email': re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),
+        'credit_card': re.compile(r'\b(?:\d{4}[\s-]?){3}\d{4}\b'),
+        'ssn': re.compile(r'\b\d{3}-\d{2}-\d{4}\b'),
+        'phone': re.compile(r'\b(?:\+?1[\s-]?)?\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4}\b'),
+        'ip_address': re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b'),
+    }
 
-    def __init__(self, send_default_pii: bool = False):
-        self.send_default_pii = send_default_pii
+    # Sensitive field names
+    SENSITIVE_FIELDS = {
+        'password', 'passwd', 'pwd', 'secret', 'api_key', 'apikey',
+        'token', 'auth', 'authorization', 'credit_card', 'creditcard',
+        'ssn', 'social_security', 'cvv', 'pin'
+    }
 
-    def sanitize_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Sanitize dictionary recursively."""
-        if not isinstance(data, dict):
+    def __init__(self, sanitize_pii: bool = True):
+        self.sanitize_pii = sanitize_pii
+
+    def sanitize(self, data: Any) -> Any:
+        """Sanitize PII from data."""
+        if not self.sanitize_pii:
             return data
-       
-        sanitized = {}
+
+        if isinstance(data, dict):
+            return self._sanitize_dict(data)
+        elif isinstance(data, list):
+            return [self.sanitize(item) for item in data]
+        elif isinstance(data, str):
+            return self._sanitize_string(data)
+        else:
+            return data
+
+    def _sanitize_dict(self, data: Dict) -> Dict:
+        """Sanitize dictionary."""
+        result = {}
         for key, value in data.items():
-            if self._is_sensitive_key(key):
-                sanitized[key] = "[REDACTED]"
-            elif isinstance(value, dict):
-                sanitized[key] = self.sanitize_dict(value)
-            elif isinstance(value, list):
-                sanitized[key] = [self.sanitize_dict(item) if isinstance(item, dict) else item for item in value]
-            elif isinstance(value, str) and not self.send_default_pii:
-                sanitized[key] = self._sanitize_string(value)
+            # Check if key is sensitive
+            if key.lower() in self.SENSITIVE_FIELDS:
+                result[key] = '[REDACTED]'
             else:
-                sanitized[key] = value
-       
-        return sanitized
-
-    def sanitize_headers(self, headers: Dict[str, str]) -> Dict[str, str]:
-        """Sanitize HTTP headers."""
-        sanitized = {}
-        for key, value in headers.items():
-            key_lower = key.lower()
-            if key_lower in ['authorization', 'cookie', 'x-api-key']:
-                sanitized[key] = "[REDACTED]"
-            else:
-                sanitized[key] = value
-        return sanitized
-
-    def _is_sensitive_key(self, key: str) -> bool:
-        """Check if key is sensitive."""
-        key_lower = key.lower()
-        return any(sensitive in key_lower for sensitive in self.SENSITIVE_KEYS)
+                result[key] = self.sanitize(value)
+        return result
 
     def _sanitize_string(self, text: str) -> str:
-        """Sanitize PII patterns in strings."""
-        if not text:
-            return text
-       
-        # Mask email addresses
-        text = self.EMAIL_PATTERN.sub(lambda m: self._mask_email(m.group()), text)
-       
-        # Mask phone numbers
-        text = self.PHONE_PATTERN.sub("XXX-XXX-XXXX", text)
-       
-        # Mask SSN
-        text = self.SSN_PATTERN.sub("XXX-XX-XXXX", text)
-       
-        # Mask credit cards
-        text = self.CREDIT_CARD_PATTERN.sub("XXXX-XXXX-XXXX-XXXX", text)
-       
-        return text
-
-    def _mask_email(self, email: str) -> str:
-        """Mask email address."""
-        parts = email.split('@')
-        if len(parts) != 2:
-            return "[EMAIL]"
-       
-        username = parts[0]
-        domain = parts[1]
-       
-        if len(username) <= 2:
-            masked_username = "**"
-        else:
-            masked_username = username[0] + "*" * (len(username) - 2) + username[-1]
-       
-        return f"{masked_username}@{domain}"
+        """Sanitize string content."""
+        result = text
+        for pattern_name, pattern in self.PATTERNS.items():
+            result = pattern.sub(f'[{pattern_name.upper()}_REDACTED]', result)
+        return result

@@ -7,77 +7,73 @@ from urllib.parse import urlparse
 
 
 class Config:
-    """SDK configuration."""
-
+    """SDK configuration.
+   
+    Can be initialized in multiple ways:
+   
+    1. Connection string:
+        Config(connection_string="rootsense://key@api.rootsense.ai/project")
+   
+    2. Individual parameters:
+        Config(api_key="key", project_id="project", base_url="https://api.rootsense.ai")
+   
+    3. Environment variables:
+        Config()  # Reads from ROOTSENSE_API_KEY, ROOTSENSE_PROJECT_ID, etc.
+    """
+   
     def __init__(
         self,
-        dsn: str,
+        api_key: Optional[str] = None,
+        project_id: Optional[str] = None,
+        base_url: Optional[str] = None,
+        connection_string: Optional[str] = None,
         environment: str = "production",
-        enable_prometheus: bool = True,
-        sample_rate: float = 1.0,
-        debug: bool = False,
-        send_default_pii: bool = False,
-        max_breadcrumbs: int = 100,
+        sanitize_pii: bool = True,
+        debug: bool = False
     ):
-        self.dsn = dsn
-        self.environment = environment
-        self.enable_prometheus = enable_prometheus
-        self.sample_rate = sample_rate
-        self.debug = debug
-        self.send_default_pii = send_default_pii
-        self.max_breadcrumbs = max_breadcrumbs
+        # Try connection string first
+        if connection_string:
+            parsed = self._parse_connection_string(connection_string)
+            self.api_key = parsed["api_key"]
+            self.project_id = parsed["project_id"]
+            self.base_url = parsed["base_url"]
+        else:
+            # Try environment variables, then parameters
+            self.api_key = api_key or os.getenv("ROOTSENSE_API_KEY")
+            self.project_id = project_id or os.getenv("ROOTSENSE_PROJECT_ID")
+            self.base_url = base_url or os.getenv("ROOTSENSE_BASE_URL", "https://api.rootsense.ai")
        
-        # Parse DSN: https://API_KEY@api.rootsense.ai/PROJECT_ID
-        self.api_key, self.base_url, self.project_id = self._parse_dsn(dsn)
-
-    def _parse_dsn(self, dsn: str):
-        """Parse Sentry-style DSN."""
-        match = re.match(r"https://([^@]+)@([^/]+)/(.+)", dsn)
+        self.environment = environment or os.getenv("ROOTSENSE_ENVIRONMENT", "production")
+        self.sanitize_pii = sanitize_pii
+        self.debug = debug or os.getenv("ROOTSENSE_DEBUG", "false").lower() == "true"
+       
+        self._validate()
+   
+    def _parse_connection_string(self, conn_str: str) -> dict:
+        """Parse connection string.
+       
+        Format: rootsense://api_key@host/project_id
+        Example: rootsense://abc123@api.rootsense.ai/my-project
+        """
+        match = re.match(r"rootsense://([^@]+)@([^/]+)/(.+)", conn_str)
         if not match:
             raise ValueError(
-                f"Invalid DSN format. Expected: https://API_KEY@api.rootsense.ai/PROJECT_ID, got: {dsn}"
+                "Invalid connection string format. "
+                "Expected: rootsense://api_key@host/project_id"
             )
        
-        api_key = match.group(1)
-        host = match.group(2)
-        project_id = match.group(3)
-       
-        base_url = f"https://{host}/v1"
-       
-        return api_key, base_url, project_id
-
-
-# Global client instance
-_client: Optional["RootSenseClient"] = None
-
-
-def init(dsn: Optional[str] = None, **options) -> "RootSenseClient":
-    """Initialize RootSense SDK.
+        api_key, host, project_id = match.groups()
+        return {
+            "api_key": api_key,
+            "project_id": project_id,
+            "base_url": f"https://{host}"
+        }
    
-    Args:
-        dsn: RootSense DSN (https://API_KEY@api.rootsense.ai/PROJECT_ID)
-            Can also be set via ROOTSENSE_DSN environment variable
-        **options: Additional configuration options
-           
-    Returns:
-        RootSenseClient instance
-    """
-    global _client
-   
-    if dsn is None:
-        dsn = os.environ.get("ROOTSENSE_DSN")
-   
-    if not dsn:
-        raise ValueError("DSN must be provided via init() or ROOTSENSE_DSN environment variable")
-   
-    from rootsense.client import RootSenseClient
-   
-    config = Config(dsn, **options)
-    _client = RootSenseClient(config)
-   
-    return _client
-
-
-def get_client() -> Optional["RootSenseClient"]:
-    """Get the global RootSense client instance."""
-    return _client
+    def _validate(self):
+        """Validate configuration."""
+        if not self.api_key:
+            raise ValueError("API key is required")
+        if not self.project_id:
+            raise ValueError("Project ID is required")
+        if not self.base_url:
+            raise ValueError("Base URL is required")

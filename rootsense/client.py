@@ -6,10 +6,8 @@ import threading
 from typing import Any, Dict, Optional
 
 from rootsense.config import Config
-from rootsense.collectors.prometheus_collector import PrometheusCollector
 from rootsense.collectors.error_collector import ErrorCollector
 from rootsense.transport.http_transport import HttpTransport
-from rootsense.transport.websocket_transport import WebSocketTransport
 from rootsense.utils.sanitizer import Sanitizer
 
 logger = logging.getLogger(__name__)
@@ -24,16 +22,10 @@ class RootSenseClient:
         self._initialized = False
        
         # Initialize components
-        self.sanitizer = Sanitizer(send_default_pii=config.send_default_pii)
+        self.sanitizer = Sanitizer(sanitize_pii=config.sanitize_pii)
         self.http_transport = HttpTransport(config)
-        self.ws_transport = WebSocketTransport(config)
        
-        # Initialize collectors
-        if config.enable_prometheus:
-            self.prometheus_collector = PrometheusCollector(config)
-        else:
-            self.prometheus_collector = None
-           
+        # Initialize error collector with integrated metrics
         self.error_collector = ErrorCollector(config, self.http_transport)
        
         # Start background workers
@@ -50,7 +42,6 @@ class RootSenseClient:
     def _start(self):
         """Start background workers."""
         self.error_collector.start()
-        self.ws_transport.start()
 
     def capture_exception(
         self,
@@ -97,7 +88,7 @@ class RootSenseClient:
            
         try:
             self.error_collector.flush(timeout=5)
-            self.ws_transport.close()
+            self.error_collector.stop()
             self._initialized = False
            
             if self.config.debug:
