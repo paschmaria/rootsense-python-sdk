@@ -39,43 +39,65 @@ class FastAPIMiddleware(BaseHTTPMiddleware):
         """
         start_time = time.time()
         
-        # Set request context
-        set_context("request", {
-            "url": str(request.url),
-            "method": request.method,
-            "headers": dict(request.headers),
-            "client": request.client.host if request.client else None,
-        })
-
-        # Set user context if available
-        if hasattr(request.state, "user") and request.state.user:
-            from rootsense.context import set_user
-            user = request.state.user
-            set_user({
-                "id": getattr(user, "id", None),
-                "email": getattr(user, "email", None),
-                "username": getattr(user, "username", None),
+        # Extract service name
+        service = "fastapi"
+        endpoint = request.url.path
+        
+        # Track active request
+        with self.client.error_collector.track_active_request(service):
+            # Set request context
+            set_context("request", {
+                "url": str(request.url),
+                "method": request.method,
+                "headers": dict(request.headers),
+                "client": request.client.host if request.client else None,
             })
 
-        try:
-            response = await call_next(request)
-            
-            # Track performance metrics
-            duration = time.time() - start_time
-            set_tag("http.status_code", response.status_code)
-            set_tag("http.response_time", duration)
-            
-            # Track successful request
-            if 200 <= response.status_code < 400:
-                set_tag("request.success", True)
-            
-            return response
-            
-        except Exception as exc:
-            # Capture the exception
-            if self.client:
-                self.client.capture_exception(exc)
-            raise
+            # Set user context if available
+            if hasattr(request.state, "user") and request.state.user:
+                from rootsense.context import set_user
+                user = request.state.user
+                set_user({
+                    "id": getattr(user, "id", None),
+                    "email": getattr(user, "email", None),
+                    "username": getattr(user, "username", None),
+                })
+
+            try:
+                response = await call_next(request)
+                
+                # Track performance metrics
+                duration = time.time() - start_time
+                
+                # Record request metrics
+                self.client.error_collector.record_request(
+                    method=request.method,
+                    endpoint=endpoint,
+                    status_code=response.status_code,
+                    duration=duration,
+                    service=service
+                )
+                
+                set_tag("http.status_code", response.status_code)
+                set_tag("http.response_time", duration)
+                
+                # Track successful request
+                if 200 <= response.status_code < 400:
+                    set_tag("request.success", True)
+                
+                return response
+                
+            except Exception as exc:
+                # Capture the exception with context
+                if self.client:
+                    context = {
+                        "service": service,
+                        "endpoint": endpoint,
+                        "method": request.method,
+                        "url": str(request.url),
+                    }
+                    self.client.capture_exception(exc, context=context)
+                raise
 
 
 class FastAPIIntegration:
@@ -118,7 +140,7 @@ def capture_fastapi_errors(app: FastAPI, client=None):
     Example:
         >>> from fastapi import FastAPI
         >>> import rootsense
-        >>> from rootsense.integrations.fastapi import capture_fastapi_errors
+        >>> from rootsense.middleware.fastapi import capture_fastapi_errors
         >>> 
         >>> rootsense.init(api_key="your-api-key", project_id="your-project-id")
         >>> app = FastAPI()

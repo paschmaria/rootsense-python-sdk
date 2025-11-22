@@ -52,6 +52,11 @@ class FlaskIntegration:
         """Called before each request."""
         g._rootsense_start_time = time.time()
         
+        # Track active request
+        service = request.blueprint or "default"
+        g._rootsense_request_tracker = self.client.error_collector.track_active_request(service)
+        g._rootsense_request_tracker.__enter__()
+        
         # Set request context
         set_context("request", {
             "url": request.url,
@@ -81,13 +86,28 @@ class FlaskIntegration:
         if hasattr(g, "_rootsense_start_time"):
             duration = time.time() - g._rootsense_start_time
             
-            # Track performance metrics
+            # Record request metrics
+            endpoint = request.endpoint or "unknown"
+            service = request.blueprint or "default"
+            self.client.error_collector.record_request(
+                method=request.method,
+                endpoint=endpoint,
+                status_code=response.status_code,
+                duration=duration,
+                service=service
+            )
+            
+            # Set tags for context
             set_tag("http.status_code", response.status_code)
             set_tag("http.response_time", duration)
             
             # Track successful request (for auto-resolution)
             if 200 <= response.status_code < 400:
                 set_tag("request.success", True)
+        
+        # Exit request tracker
+        if hasattr(g, "_rootsense_request_tracker"):
+            g._rootsense_request_tracker.__exit__(None, None, None)
 
         return response
 
@@ -97,8 +117,18 @@ class FlaskIntegration:
         Args:
             exc: Exception if one occurred, None otherwise
         """
+        # Cleanup request tracker if still active
+        if hasattr(g, "_rootsense_request_tracker"):
+            g._rootsense_request_tracker.__exit__(None, None, None)
+        
         if exc is not None and self.client:
-            self.client.capture_exception(exc)
+            context = {
+                "service": request.blueprint or "default",
+                "endpoint": request.endpoint or "unknown",
+                "method": request.method,
+                "url": request.url,
+            }
+            self.client.capture_exception(exc, context=context)
 
     def _handle_exception(self, exc):
         """Handle exceptions that occur during request processing.
@@ -110,8 +140,13 @@ class FlaskIntegration:
             The original exception
         """
         if self.client:
-            # Capture the exception
-            self.client.capture_exception(exc)
+            context = {
+                "service": request.blueprint or "default",
+                "endpoint": request.endpoint or "unknown",
+                "method": request.method,
+                "url": request.url,
+            }
+            self.client.capture_exception(exc, context=context)
 
         # Re-raise the exception so Flask can handle it
         if isinstance(exc, HTTPException):
@@ -132,7 +167,7 @@ def capture_flask_errors(app: Flask, client=None):
     Example:
         >>> from flask import Flask
         >>> import rootsense
-        >>> from rootsense.integrations.flask import capture_flask_errors
+        >>> from rootsense.middleware.flask import capture_flask_errors
         >>> 
         >>> rootsense.init(api_key="your-api-key", project_id="your-project-id")
         >>> app = Flask(__name__)
