@@ -1,5 +1,5 @@
-"""Auto-instrumentation support for popular frameworks and libraries."""
+"""OpenTelemetry instrumentation for RootSense."""
 
-from .auto import install_auto_instrumentation
+from rootsense.instrumentation.auto import AutoInstrumentation
 
-__all__ = ["install_auto_instrumentation"]
+__all__ = ['AutoInstrumentation']

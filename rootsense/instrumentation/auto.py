@@ -1,162 +1,180 @@
-"""Automatic instrumentation using OpenTelemetry.
-
-This module provides auto-instrumentation for:
-- Django ORM database queries
-- Flask/Django HTTP requests  
-- SQLAlchemy database queries
-- HTTP requests (requests, httpx, urllib)
-- Redis operations
-- Celery tasks
-
-These instrumentations are leveraged from OpenTelemetry's ecosystem.
-"""
+"""Automatic instrumentation setup using OpenTelemetry."""
 
 import logging
 from typing import Optional
 
+try:
+    from opentelemetry import trace, metrics
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    from opentelemetry.sdk.resources import Resource
+    
+    OPENTELEMETRY_AVAILABLE = True
+except ImportError:
+    OPENTELEMETRY_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
-# Track whether instrumentation is installed
-_instrumentation_installed = False
 
+class AutoInstrumentation:
+    """Manages automatic instrumentation via OpenTelemetry."""
 
-def install_auto_instrumentation(enable_django: bool = True,
-                                 enable_flask: bool = True,
-                                 enable_sqlalchemy: bool = True,
-                                 enable_requests: bool = True,
-                                 enable_redis: bool = True,
-                                 enable_celery: bool = True) -> bool:
-    """Install automatic instrumentation for supported libraries.
-    
-    This function attempts to install OpenTelemetry instrumentation for
-    various popular Python libraries. It will only install instrumentation
-    for libraries that are actually installed in the environment.
-    
-    Args:
-        enable_django: Install Django instrumentation (ORM, middleware, views)
-        enable_flask: Install Flask instrumentation
-        enable_sqlalchemy: Install SQLAlchemy instrumentation
-        enable_requests: Install requests/httpx/urllib instrumentation
-        enable_redis: Install Redis instrumentation
-        enable_celery: Install Celery instrumentation
+    def __init__(self, error_collector, http_transport, config):
+        if not OPENTELEMETRY_AVAILABLE:
+            logger.warning(
+                "OpenTelemetry not installed. Install with: pip install rootsense[instrumentation]"
+            )
+            return
         
-    Returns:
-        True if any instrumentation was installed, False otherwise
+        self.error_collector = error_collector
+        self.http_transport = http_transport
+        self.config = config
+        self._initialized = False
+
+    def initialize(self) -> bool:
+        """Initialize OpenTelemetry with custom exporters."""
+        if not OPENTELEMETRY_AVAILABLE:
+            return False
         
-    Example:
-        >>> import rootsense
-        >>> rootsense.init(api_key="key", project_id="proj")
-        >>> # Auto-instrument everything
-        >>> from rootsense.instrumentation import install_auto_instrumentation
-        >>> install_auto_instrumentation()
-    """
-    global _instrumentation_installed
-    
-    if _instrumentation_installed:
-        logger.debug("Auto-instrumentation already installed")
-        return True
-    
-    installed_count = 0
-    
-    # Django instrumentation
-    if enable_django:
+        if self._initialized:
+            logger.debug("Auto-instrumentation already initialized")
+            return True
+        
+        try:
+            # Import exporters
+            from rootsense.instrumentation.exporters import (
+                RootSenseSpanExporter,
+                RootSenseMetricExporter
+            )
+            
+            # Create resource with service information
+            resource = Resource.create({
+                "service.name": self.config.service_name or "unknown",
+                "service.version": self.config.service_version or "unknown",
+                "deployment.environment": self.config.environment or "production",
+                "rootsense.project_id": self.config.project_id
+            })
+            
+            # Setup tracing
+            span_exporter = RootSenseSpanExporter(self.error_collector, self.http_transport)
+            tracer_provider = TracerProvider(resource=resource)
+            tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
+            trace.set_tracer_provider(tracer_provider)
+            
+            # Setup metrics
+            metric_exporter = RootSenseMetricExporter(self.http_transport)
+            metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
+            meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+            metrics.set_meter_provider(meter_provider)
+            
+            # Enable auto-instrumentation for installed frameworks
+            self._enable_auto_instrumentation()
+            
+            self._initialized = True
+            logger.info("OpenTelemetry auto-instrumentation initialized")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize auto-instrumentation: {e}")
+            return False
+
+    def _enable_auto_instrumentation(self):
+        """Enable automatic instrumentation for available frameworks."""
+        instrumentors = []
+        
+        # Django
         try:
             from opentelemetry.instrumentation.django import DjangoInstrumentor
             DjangoInstrumentor().instrument()
-            logger.info("Installed Django auto-instrumentation (ORM queries, views, middleware)")
-            installed_count += 1
+            instrumentors.append('Django')
         except ImportError:
-            logger.debug("Django not installed, skipping Django instrumentation")
+            pass
         except Exception as e:
-            logger.warning(f"Failed to install Django instrumentation: {e}")
-    
-    # Flask instrumentation
-    if enable_flask:
+            logger.debug(f"Could not instrument Django: {e}")
+        
+        # Flask
         try:
             from opentelemetry.instrumentation.flask import FlaskInstrumentor
             FlaskInstrumentor().instrument()
-            logger.info("Installed Flask auto-instrumentation")
-            installed_count += 1
+            instrumentors.append('Flask')
         except ImportError:
-            logger.debug("Flask not installed, skipping Flask instrumentation")
+            pass
         except Exception as e:
-            logger.warning(f"Failed to install Flask instrumentation: {e}")
-    
-    # SQLAlchemy instrumentation
-    if enable_sqlalchemy:
+            logger.debug(f"Could not instrument Flask: {e}")
+        
+        # SQLAlchemy
         try:
             from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
             SQLAlchemyInstrumentor().instrument()
-            logger.info("Installed SQLAlchemy auto-instrumentation")
-            installed_count += 1
+            instrumentors.append('SQLAlchemy')
         except ImportError:
-            logger.debug("SQLAlchemy not installed, skipping SQLAlchemy instrumentation")
+            pass
         except Exception as e:
-            logger.warning(f"Failed to install SQLAlchemy instrumentation: {e}")
-    
-    # HTTP client instrumentation (requests, httpx, urllib)
-    if enable_requests:
-        # requests library
+            logger.debug(f"Could not instrument SQLAlchemy: {e}")
+        
+        # Requests
         try:
             from opentelemetry.instrumentation.requests import RequestsInstrumentor
             RequestsInstrumentor().instrument()
-            logger.info("Installed requests library auto-instrumentation")
-            installed_count += 1
+            instrumentors.append('Requests')
         except ImportError:
-            logger.debug("requests not installed, skipping requests instrumentation")
+            pass
         except Exception as e:
-            logger.warning(f"Failed to install requests instrumentation: {e}")
+            logger.debug(f"Could not instrument Requests: {e}")
         
-        # httpx library  
+        # HTTPX
         try:
             from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
             HTTPXClientInstrumentor().instrument()
-            logger.info("Installed httpx auto-instrumentation")
-            installed_count += 1
+            instrumentors.append('HTTPX')
         except ImportError:
-            logger.debug("httpx not installed, skipping httpx instrumentation")
+            pass
         except Exception as e:
-            logger.warning(f"Failed to install httpx instrumentation: {e}")
+            logger.debug(f"Could not instrument HTTPX: {e}")
         
-        # urllib (stdlib)
-        try:
-            from opentelemetry.instrumentation.urllib import URLLibInstrumentor
-            URLLibInstrumentor().instrument()
-            logger.info("Installed urllib auto-instrumentation")
-            installed_count += 1
-        except ImportError:
-            pass  # Always available in stdlib
-        except Exception as e:
-            logger.warning(f"Failed to install urllib instrumentation: {e}")
-    
-    # Redis instrumentation
-    if enable_redis:
+        # Redis
         try:
             from opentelemetry.instrumentation.redis import RedisInstrumentor
             RedisInstrumentor().instrument()
-            logger.info("Installed Redis auto-instrumentation")
-            installed_count += 1
+            instrumentors.append('Redis')
         except ImportError:
-            logger.debug("Redis not installed, skipping Redis instrumentation")
+            pass
         except Exception as e:
-            logger.warning(f"Failed to install Redis instrumentation: {e}")
-    
-    # Celery instrumentation
-    if enable_celery:
+            logger.debug(f"Could not instrument Redis: {e}")
+        
+        # Celery
         try:
             from opentelemetry.instrumentation.celery import CeleryInstrumentor
             CeleryInstrumentor().instrument()
-            logger.info("Installed Celery auto-instrumentation")
-            installed_count += 1
+            instrumentors.append('Celery')
         except ImportError:
-            logger.debug("Celery not installed, skipping Celery instrumentation")
+            pass
         except Exception as e:
-            logger.warning(f"Failed to install Celery instrumentation: {e}")
-    
-    if installed_count > 0:
-        logger.info(f"Successfully installed {installed_count} auto-instrumentations")
-        _instrumentation_installed = True
-        return True
-    else:
-        logger.warning("No auto-instrumentation could be installed")
-        return False
+            logger.debug(f"Could not instrument Celery: {e}")
+        
+        if instrumentors:
+            logger.info(f"Auto-instrumentation enabled for: {', '.join(instrumentors)}")
+        else:
+            logger.info("No frameworks detected for auto-instrumentation")
+
+    def shutdown(self):
+        """Shutdown auto-instrumentation."""
+        if not OPENTELEMETRY_AVAILABLE or not self._initialized:
+            return
+        
+        try:
+            # Shutdown tracer provider
+            tracer_provider = trace.get_tracer_provider()
+            if hasattr(tracer_provider, 'shutdown'):
+                tracer_provider.shutdown()
+            
+            # Shutdown meter provider
+            meter_provider = metrics.get_meter_provider()
+            if hasattr(meter_provider, 'shutdown'):
+                meter_provider.shutdown()
+            
+            logger.info("Auto-instrumentation shutdown complete")
+        except Exception as e:
+            logger.error(f"Error during auto-instrumentation shutdown: {e}")
