@@ -16,11 +16,14 @@ class Config:
         backend_url: Optional[str] = None,
         connection_string: Optional[str] = None,
         environment: str = "production",
+        service_name: Optional[str] = None,
+        service_version: Optional[str] = None,
         sample_rate: float = 1.0,
         debug: bool = False,
         sanitize_pii: bool = True,
         max_breadcrumbs: int = 100,
         buffer_size: int = 1000,
+        enable_auto_instrumentation: bool = True,
     ):
         """Initialize SDK configuration.
         
@@ -30,11 +33,14 @@ class Config:
             backend_url: RootSense backend URL (default: https://api.rootsense.ai)
             connection_string: Alternative format: rootsense://API_KEY@HOST/PROJECT_ID
             environment: Environment name (production, staging, development, etc.)
+            service_name: Service name for tracing (auto-detected if not provided)
+            service_version: Service version for tracing
             sample_rate: Error sampling rate (0.0-1.0)
             debug: Enable debug logging
             sanitize_pii: Automatically sanitize PII in requests/responses (default: True)
             max_breadcrumbs: Maximum breadcrumbs to store
             buffer_size: Event buffer size
+            enable_auto_instrumentation: Enable OpenTelemetry auto-instrumentation (default: True)
         """
         # Parse connection string if provided
         if connection_string:
@@ -61,13 +67,17 @@ class Config:
         
         self.api_key = api_key
         self.project_id = project_id
-        self.backend_url = backend_url.rstrip('/')
+        self.backend_url = backend_url.rstrip('/')  
+        self.base_url = self.backend_url  # Alias for compatibility
         self.environment = environment
+        self.service_name = service_name
+        self.service_version = service_version
         self.sample_rate = sample_rate
         self.debug = debug
         self.sanitize_pii = sanitize_pii
         self.max_breadcrumbs = max_breadcrumbs
         self.buffer_size = buffer_size
+        self.enable_auto_instrumentation = enable_auto_instrumentation
         
         # Construct API endpoints
         self.events_endpoint = f"{self.backend_url}/v1/projects/{self.project_id}/events"
@@ -94,67 +104,3 @@ class Config:
         backend_url = f"https://{host}"
         
         return api_key, backend_url, project_id
-
-
-# Global client instance
-_client: Optional["RootSenseClient"] = None
-
-
-def init(
-    api_key: Optional[str] = None,
-    project_id: Optional[str] = None,
-    backend_url: Optional[str] = None,
-    connection_string: Optional[str] = None,
-    **options
-) -> "RootSenseClient":
-    """Initialize RootSense SDK.
-    
-    You can initialize using either:
-    1. Separate parameters:
-        rootsense.init(
-            api_key="your-api-key",
-            project_id="your-project-id",
-            backend_url="https://api.rootsense.ai"  # optional
-        )
-    
-    2. Connection string:
-        rootsense.init(
-            connection_string="rootsense://your-api-key@api.rootsense.ai/your-project-id"
-        )
-    
-    3. Environment variables:
-        ROOTSENSE_API_KEY=your-api-key
-        ROOTSENSE_PROJECT_ID=your-project-id
-        ROOTSENSE_BACKEND_URL=https://api.rootsense.ai  # optional
-        
-        rootsense.init()  # Reads from environment
-    
-    Args:
-        api_key: Your RootSense API key
-        project_id: Your RootSense project ID
-        backend_url: RootSense backend URL (default: https://api.rootsense.ai)
-        connection_string: Alternative connection string format
-        **options: Additional configuration options
-           
-    Returns:
-        RootSenseClient instance
-    """
-    global _client
-    
-    from rootsense.client import RootSenseClient
-    
-    config = Config(
-        api_key=api_key,
-        project_id=project_id,
-        backend_url=backend_url,
-        connection_string=connection_string,
-        **options
-    )
-    _client = RootSenseClient(config)
-    
-    return _client
-
-
-def get_client() -> Optional["RootSenseClient"]:
-    """Get the global RootSense client instance."""
-    return _client
