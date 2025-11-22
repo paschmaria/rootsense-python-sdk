@@ -38,42 +38,43 @@ class DjangoMiddleware:
             HttpResponse object
         """
         start_time = time.time()
-        
-        # Set request context
-        set_context("request", {
-            "url": request.build_absolute_uri(),
-            "method": request.method,
-            "headers": dict(request.headers),
-            "remote_addr": self._get_client_ip(request),
-        })
 
-        # Set user context if available
-        if hasattr(request, "user") and request.user.is_authenticated:
-            set_user({
-                "id": request.user.id,
-                "email": getattr(request.user, "email", None),
-                "username": request.user.username,
+        with self.client.error_collector.track_active_request("django"):
+            # Set request context
+            set_context("request", {
+                "url": request.build_absolute_uri(),
+                "method": request.method,
+                "headers": dict(request.headers),
+                "remote_addr": self._get_client_ip(request),
             })
 
-        try:
-            response = self.get_response(request)
-            
-            # Track performance metrics
-            duration = time.time() - start_time
-            set_tag("http.status_code", response.status_code)
-            set_tag("http.response_time", duration)
-            
-            # Track successful request
-            if 200 <= response.status_code < 400:
-                set_tag("request.success", True)
-            
-            return response
-            
-        except Exception as exc:
-            # Capture the exception
-            if self.client:
-                self.client.capture_exception(exc)
-            raise
+            # Set user context if available
+            if hasattr(request, "user") and request.user.is_authenticated:
+                set_user({
+                    "id": request.user.id,
+                    "email": getattr(request.user, "email", None),
+                    "username": request.user.username,
+                })
+
+            try:
+                response = self.get_response(request)
+                
+                # Track performance metrics
+                duration = time.time() - start_time
+                set_tag("http.status_code", response.status_code)
+                set_tag("http.response_time", duration)
+                
+                # Track successful request
+                if 200 <= response.status_code < 400:
+                    set_tag("request.success", True)
+                
+                return response
+                
+            except Exception as exc:
+                # Capture the exception
+                if self.client:
+                    self.client.capture_exception(exc)
+                raise
 
     def process_exception(self, request: HttpRequest, exception: Exception):
         """Process exceptions that occur during request handling.
