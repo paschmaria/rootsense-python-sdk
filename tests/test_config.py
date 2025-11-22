@@ -1,84 +1,90 @@
-"""Tests for RootSense configuration."""
+"""Tests for configuration parsing."""
 
 import pytest
 import os
-from unittest.mock import patch
-
-from rootsense.config import Config, init, get_client
+from rootsense.config import Config
 
 
 class TestConfig:
-    """Test Config class."""
+    """Test configuration parsing."""
 
-    def test_config_initialization(self):
-        """Test basic config initialization."""
+    def test_separate_params(self):
+        """Test initialization with separate parameters."""
         config = Config(
-            api_key="test_key",
-            project_id="test_project"
+            api_key="test-key",
+            project_id="test-project",
+            backend_url="https://api.test.com"
         )
         
-        assert config.api_key == "test_key"
-        assert config.project_id == "test_project"
-        assert config.environment == "production"
-        assert config.debug is False
+        assert config.api_key == "test-key"
+        assert config.project_id == "test-project"
+        assert config.backend_url == "https://api.test.com"
+        assert config.events_endpoint == "https://api.test.com/v1/projects/test-project/events"
 
-    def test_config_with_environment(self):
-        """Test config with custom environment."""
+    def test_connection_string(self):
+        """Test initialization with connection string."""
         config = Config(
-            api_key="test_key",
-            project_id="test_project",
-            environment="staging"
+            connection_string="rootsense://test-key@api.test.com/test-project"
+        )
+        
+        assert config.api_key == "test-key"
+        assert config.project_id == "test-project"
+        assert config.backend_url == "https://api.test.com"
+
+    def test_env_vars(self, monkeypatch):
+        """Test initialization from environment variables."""
+        monkeypatch.setenv("ROOTSENSE_API_KEY", "env-key")
+        monkeypatch.setenv("ROOTSENSE_PROJECT_ID", "env-project")
+        monkeypatch.setenv("ROOTSENSE_BACKEND_URL", "https://api.env.com")
+        
+        config = Config()
+        
+        assert config.api_key == "env-key"
+        assert config.project_id == "env-project"
+        assert config.backend_url == "https://api.env.com"
+
+    def test_missing_api_key(self):
+        """Test that missing API key raises error."""
+        with pytest.raises(ValueError, match="api_key is required"):
+            Config(project_id="test-project")
+
+    def test_missing_project_id(self):
+        """Test that missing project ID raises error."""
+        with pytest.raises(ValueError, match="project_id is required"):
+            Config(api_key="test-key")
+
+    def test_invalid_connection_string(self):
+        """Test that invalid connection string raises error."""
+        with pytest.raises(ValueError, match="Invalid connection string format"):
+            Config(connection_string="invalid-format")
+
+    def test_defaults(self):
+        """Test default configuration values."""
+        config = Config(api_key="test-key", project_id="test-project")
+        
+        assert config.environment == "production"
+        assert config.sample_rate == 1.0
+        assert config.debug is False
+        assert config.sanitize_pii is True
+        assert config.max_breadcrumbs == 100
+        assert config.buffer_size == 1000
+
+    def test_custom_options(self):
+        """Test custom configuration options."""
+        config = Config(
+            api_key="test-key",
+            project_id="test-project",
+            environment="staging",
+            sample_rate=0.5,
+            debug=True,
+            sanitize_pii=False,
+            max_breadcrumbs=50,
+            buffer_size=500
         )
         
         assert config.environment == "staging"
-
-    def test_config_from_environment_variables(self):
-        """Test config from environment variables."""
-        with patch.dict(os.environ, {
-            'ROOTSENSE_API_KEY': 'env_key',
-            'ROOTSENSE_PROJECT_ID': 'env_project',
-            'ROOTSENSE_ENVIRONMENT': 'development'
-        }):
-            config = Config.from_env()
-            
-            assert config.api_key == 'env_key'
-            assert config.project_id == 'env_project'
-            assert config.environment == 'development'
-
-    def test_config_missing_required_fields(self):
-        """Test config raises error without required fields."""
-        with pytest.raises(ValueError):
-            Config(api_key="test_key")  # Missing project_id
-
-
-class TestGlobalConfig:
-    """Test global configuration functions."""
-
-    def test_init_creates_client(self):
-        """Test init() creates global client."""
-        with patch('rootsense.config.RootSenseClient'):
-            client = init(
-                api_key="test_key",
-                project_id="test_project"
-            )
-            
-            assert client is not None
-
-    def test_get_client_returns_initialized_client(self):
-        """Test get_client() returns the initialized client."""
-        with patch('rootsense.config.RootSenseClient') as mock_client_class:
-            mock_client = mock_client_class.return_value
-            
-            init(api_key="test_key", project_id="test_project")
-            client = get_client()
-            
-            assert client == mock_client
-
-    def test_get_client_without_init(self):
-        """Test get_client() returns None if not initialized."""
-        # Reset global client
-        import rootsense.config
-        rootsense.config._client = None
-        
-        client = get_client()
-        assert client is None
+        assert config.sample_rate == 0.5
+        assert config.debug is True
+        assert config.sanitize_pii is False
+        assert config.max_breadcrumbs == 50
+        assert config.buffer_size == 500
