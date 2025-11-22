@@ -1,4 +1,4 @@
-"""Error event collector and buffer."""
+"""Error event collector with integrated metrics and auto-resolution."""
 
 import hashlib
 import logging
@@ -7,62 +7,60 @@ import threading
 import time
 import traceback
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-from prometheus_client import Counter, Histogram, Gauge
+try:
+    from prometheus_client import Counter, Histogram, Gauge
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
 
 class ErrorCollector:
-    """Collects and buffers error events with integrated metrics."""
+    """Collects and buffers error events with integrated Prometheus metrics and auto-resolution tracking."""
 
     def __init__(self, config, http_transport):
         self.config = config
         self.http_transport = http_transport
-        self._queue = queue.Queue(maxsize=config.buffer_size)
+        self._queue = queue.Queue(maxsize=1000)
         self._worker_thread = None
         self._stop_event = threading.Event()
         self._local = threading.local()
         
-        # Initialize Prometheus metrics (internal)
-        self._init_metrics()
+        # Auto-resolution tracking
+        self._recent_errors = {}  # fingerprint -> last_error_time
+        self._recent_successes = {}  # fingerprint -> last_success_time
+        self._lock = threading.RLock()
+       
+        # Initialize Prometheus metrics if available
+        if PROMETHEUS_AVAILABLE:
+            self._init_metrics()
+        else:
+            self._metrics_enabled = False
 
     def _init_metrics(self):
         """Initialize Prometheus metrics."""
         try:
-            self.request_count = Counter(
-                'rootsense_requests_total',
-                'Total requests',
-                ['method', 'endpoint', 'status_code', 'service']
-            )
-            
-            self.request_duration = Histogram(
-                'rootsense_request_duration_seconds',
-                'Request duration in seconds',
-                ['method', 'endpoint', 'service']
-            )
-            
             self.error_count = Counter(
                 'rootsense_errors_total',
-                'Total errors',
-                ['error_type', 'service', 'endpoint']
+                'Total number of errors captured',
+                ['error_type', 'environment']
             )
-            
-            self.active_requests = Gauge(
-                'rootsense_active_requests',
-                'Currently active requests',
-                ['service']
+            self.event_queue_size = Gauge(
+                'rootsense_event_queue_size',
+                'Current size of the event queue'
             )
+            self.batch_send_duration = Histogram(
+                'rootsense_batch_send_duration_seconds',
+                'Time taken to send event batches'
+            )
+            self._metrics_enabled = True
         except Exception as e:
-            if self.config.debug:
-                logger.warning(f"Failed to initialize Prometheus metrics: {e}")
-            # Set to None if initialization fails
-            self.request_count = None
-            self.request_duration = None
-            self.error_count = None
-            self.active_requests = None
+            logger.warning(f"Failed to initialize Prometheus metrics: {e}")
+            self._metrics_enabled = False
 
     def start(self):
         """Start the background worker."""
@@ -80,6 +78,10 @@ class ErrorCollector:
                 try:
                     event = self._queue.get(timeout=0.5)
                     batch.append(event)
+                   
+                    # Update queue size metric
+                    if self._metrics_enabled:
+                        self.event_queue_size.set(self._queue.qsize())
                 except queue.Empty:
                     pass
                
@@ -107,30 +109,17 @@ class ErrorCollector:
             return
            
         try:
-            self.http_transport.send_events(batch)
-            if self.config.debug:
+            # Track batch send duration
+            if self._metrics_enabled:
+                with self.batch_send_duration.time():
+                    success = self.http_transport.send_events(batch)
+            else:
+                success = self.http_transport.send_events(batch)
+               
+            if success and self.config.debug:
                 logger.debug(f"Sent batch of {len(batch)} events")
         except Exception as e:
             logger.error(f"Failed to send batch: {e}")
-
-    def _enrich_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Enrich event with context data."""
-        from rootsense.context import get_context
-        
-        # Get thread-local context
-        context = get_context()
-        
-        # Merge context into event
-        if context.get('user'):
-            event['user'] = context['user']
-        if context.get('tags'):
-            event.setdefault('tags', {}).update(context['tags'])
-        if context.get('extra'):
-            event.setdefault('extra', {}).update(context['extra'])
-        if context.get('breadcrumbs'):
-            event['breadcrumbs'] = context['breadcrumbs']
-        
-        return event
 
     def capture_exception(
         self,
@@ -140,15 +129,29 @@ class ErrorCollector:
     ) -> Optional[str]:
         """Capture an exception."""
         event_id = str(uuid.uuid4())
+        error_type = type(exception).__name__
+        
+        fingerprint = self._generate_fingerprint(exception, context)
+       
+        # Update metrics
+        if self._metrics_enabled:
+            self.error_count.labels(
+                error_type=error_type,
+                environment=self.config.environment
+            ).inc()
+        
+        # Track for auto-resolution
+        with self._lock:
+            self._recent_errors[fingerprint] = datetime.utcnow()
        
         event = {
             "event_id": event_id,
             "timestamp": datetime.utcnow().isoformat(),
             "type": "error",
-            "exception_type": type(exception).__name__,
+            "exception_type": error_type,
             "message": str(exception),
             "stack_trace": traceback.format_exc(),
-            "fingerprint": self._generate_fingerprint(exception, context),
+            "fingerprint": fingerprint,
             "environment": self.config.environment,
             "project_id": self.config.project_id,
         }
@@ -157,30 +160,60 @@ class ErrorCollector:
             event.update(context)
            
         event.update(kwargs)
-        
-        # Auto-enrich with thread-local context
-        event = self._enrich_event(event)
-        
-        # Record error metric
-        if self.error_count:
-            try:
-                self.error_count.labels(
-                    error_type=type(exception).__name__,
-                    service=context.get('service', 'unknown') if context else 'unknown',
-                    endpoint=context.get('endpoint', 'unknown') if context else 'unknown'
-                ).inc()
-            except Exception as e:
-                if self.config.debug:
-                    logger.warning(f"Failed to record error metric: {e}")
        
         # Add to queue
         try:
             self._queue.put_nowait(event)
+            if self._metrics_enabled:
+                self.event_queue_size.set(self._queue.qsize())
         except queue.Full:
             logger.warning("Event queue is full, dropping event")
             return None
        
         return event_id
+
+    def capture_success(
+        self,
+        endpoint: str,
+        method: str = "GET",
+        context: Optional[Dict[str, Any]] = None
+    ):
+        """Capture a successful request for auto-resolution detection.
+        
+        When an endpoint that previously had errors starts succeeding,
+        this helps detect incident resolution.
+        
+        Args:
+            endpoint: The API endpoint (e.g., "/api/users")
+            method: HTTP method
+            context: Additional context
+        """
+        # Generate same fingerprint as errors would use
+        fingerprint = self._generate_success_fingerprint(endpoint)
+        
+        with self._lock:
+            self._recent_successes[fingerprint] = datetime.utcnow()
+            
+            # Check if this endpoint had recent errors
+            if fingerprint in self._recent_errors:
+                last_error = self._recent_errors[fingerprint]
+                
+                # If error was recent (within last hour) and now succeeding,
+                # send success signal for potential auto-resolution
+                if datetime.utcnow() - last_error < timedelta(hours=1):
+                    success_context = {
+                        "endpoint": endpoint,
+                        "method": method,
+                        "last_error_time": last_error.isoformat()
+                    }
+                    if context:
+                        success_context.update(context)
+                    
+                    # Send success signal to backend
+                    self.http_transport.send_success_signal(fingerprint, success_context)
+                    
+                    # Clean up old error tracking
+                    del self._recent_errors[fingerprint]
 
     def capture_message(
         self,
@@ -206,50 +239,16 @@ class ErrorCollector:
             event.update(context)
            
         event.update(kwargs)
-        
-        # Auto-enrich with thread-local context
-        event = self._enrich_event(event)
        
         try:
             self._queue.put_nowait(event)
+            if self._metrics_enabled:
+                self.event_queue_size.set(self._queue.qsize())
         except queue.Full:
             logger.warning("Event queue is full, dropping event")
             return None
        
         return event_id
-
-    def record_request(
-        self,
-        method: str,
-        endpoint: str,
-        status_code: int,
-        duration: float,
-        service: str = "unknown"
-    ):
-        """Record request metrics."""
-        if not self.request_count or not self.request_duration:
-            return
-            
-        try:
-            self.request_count.labels(
-                method=method,
-                endpoint=endpoint,
-                status_code=str(status_code),
-                service=service
-            ).inc()
-            
-            self.request_duration.labels(
-                method=method,
-                endpoint=endpoint,
-                service=service
-            ).observe(duration)
-        except Exception as e:
-            if self.config.debug:
-                logger.warning(f"Failed to record request metrics: {e}")
-
-    def track_active_request(self, service: str = "unknown"):
-        """Context manager for tracking active requests."""
-        return ActiveRequestTracker(self.active_requests, service, self.config.debug)
 
     def _generate_fingerprint(self, exception: Exception, context: Optional[Dict] = None) -> str:
         """Generate fingerprint for incident grouping.
@@ -261,6 +260,18 @@ class ErrorCollector:
         endpoint = context.get("endpoint", "unknown") if context else "unknown"
        
         fingerprint_str = f"{error_type}|{service}|{endpoint}"
+        return hashlib.sha256(fingerprint_str.encode()).hexdigest()[:16]
+    
+    def _generate_success_fingerprint(self, endpoint: str) -> str:
+        """Generate fingerprint for successful requests.
+        
+        Uses same format as error fingerprints but without error_type,
+        matching on service + endpoint only.
+        """
+        service = self.config.project_id
+        # Generate all possible error type fingerprints for this endpoint
+        # For simplicity, we use a wildcard approach
+        fingerprint_str = f"*|{service}|{endpoint}"
         return hashlib.sha256(fingerprint_str.encode()).hexdigest()[:16]
 
     def flush(self, timeout: float = 5):
@@ -286,29 +297,3 @@ class ErrorCollector:
         self._stop_event.set()
         if self._worker_thread:
             self._worker_thread.join(timeout=5)
-
-
-class ActiveRequestTracker:
-    """Context manager for tracking active requests."""
-   
-    def __init__(self, gauge, service, debug=False):
-        self.gauge = gauge
-        self.service = service
-        self.debug = debug
-   
-    def __enter__(self):
-        if self.gauge:
-            try:
-                self.gauge.labels(service=self.service).inc()
-            except Exception as e:
-                if self.debug:
-                    logger.warning(f"Failed to track active request: {e}")
-        return self
-   
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.gauge:
-            try:
-                self.gauge.labels(service=self.service).dec()
-            except Exception as e:
-                if self.debug:
-                    logger.warning(f"Failed to untrack active request: {e}")

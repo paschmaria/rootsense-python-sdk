@@ -26,76 +26,79 @@ class DjangoMiddleware:
         
         if self.client is None:
             logger.warning("RootSense not initialized. Call rootsense.init() first.")
-            # Don't raise MiddlewareNotUsed to allow the app to still work
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
-        """Process each request.
-        
-        Args:
-            request: Django request object
-            
-        Returns:
-            HttpResponse object
-        """
+        """Process each request."""
         start_time = time.time()
+        endpoint = request.path
+        method = request.method
 
-        with self.client.error_collector.track_active_request("django"):
-            # Set request context
-            set_context("request", {
-                "url": request.build_absolute_uri(),
-                "method": request.method,
-                "headers": dict(request.headers),
-                "remote_addr": self._get_client_ip(request),
-            })
+        # Set request context
+        set_context("request", {
+            "url": request.build_absolute_uri(),
+            "method": method,
+            "headers": dict(request.headers),
+            "remote_addr": self._get_client_ip(request),
+        })
 
-            # Set user context if available
-            if hasattr(request, "user") and request.user.is_authenticated:
-                set_user({
-                    "id": request.user.id,
-                    "email": getattr(request.user, "email", None),
-                    "username": request.user.username,
-                })
+        # Set user context if available
+        if hasattr(request, "user") and request.user.is_authenticated:
+            set_user(
+                user_id=str(request.user.id),
+                email=getattr(request.user, "email", None),
+                username=request.user.username,
+            )
 
-            try:
-                response = self.get_response(request)
-                
-                # Track performance metrics
-                duration = time.time() - start_time
-                set_tag("http.status_code", response.status_code)
-                set_tag("http.response_time", duration)
-                
-                # Track successful request
-                if 200 <= response.status_code < 400:
-                    set_tag("request.success", True)
-                
-                return response
-                
-            except Exception as exc:
-                # Capture the exception
-                if self.client:
-                    self.client.capture_exception(exc)
-                raise
+        try:
+            response = self.get_response(request)
+            
+            # Track performance metrics
+            duration = time.time() - start_time
+            set_tag("http.status_code", response.status_code)
+            set_tag("http.response_time", duration)
+            
+            # Track successful request for auto-resolution
+            if self.client and 200 <= response.status_code < 400:
+                set_tag("request.success", True)
+                self.client.error_collector.capture_success(
+                    endpoint=endpoint,
+                    method=method,
+                    context={
+                        "status_code": response.status_code,
+                        "duration": duration
+                    }
+                )
+            
+            return response
+            
+        except Exception as exc:
+            # Capture the exception
+            if self.client:
+                self.client.capture_exception(
+                    exc,
+                    context={
+                        "endpoint": endpoint,
+                        "method": method,
+                        "service": self.client.config.project_id
+                    }
+                )
+            raise
 
     def process_exception(self, request: HttpRequest, exception: Exception):
-        """Process exceptions that occur during request handling.
-        
-        Args:
-            request: Django request object
-            exception: The exception that occurred
-        """
+        """Process exceptions that occur during request handling."""
         if self.client:
-            self.client.capture_exception(exception)
+            self.client.capture_exception(
+                exception,
+                context={
+                    "endpoint": request.path,
+                    "method": request.method,
+                    "service": self.client.config.project_id
+                }
+            )
 
     @staticmethod
     def _get_client_ip(request: HttpRequest) -> Optional[str]:
-        """Extract client IP from request.
-        
-        Args:
-            request: Django request object
-            
-        Returns:
-            Client IP address or None
-        """
+        """Extract client IP from request."""
         x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
         if x_forwarded_for:
             ip = x_forwarded_for.split(",")[0]
@@ -116,7 +119,7 @@ def init_django(api_key: str, project_id: str, **kwargs):
         
     Example:
         In settings.py:
-        >>> from rootsense.integrations.django import init_django
+        >>> from rootsense.middleware.django import init_django
         >>> 
         >>> init_django(
         ...     api_key=os.environ.get("ROOTSENSE_API_KEY"),
@@ -126,7 +129,7 @@ def init_django(api_key: str, project_id: str, **kwargs):
         >>> 
         >>> MIDDLEWARE = [
         ...     # ... other middleware
-        ...     'rootsense.integrations.django.DjangoMiddleware',
+        ...     'rootsense.middleware.django.DjangoMiddleware',
         ... ]
     """
     import rootsense
