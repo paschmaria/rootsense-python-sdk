@@ -24,7 +24,7 @@ class RootSenseClient:
         # Initialize components
         self.sanitizer = Sanitizer(sanitize_pii=config.sanitize_pii)
         
-        # Initialize HTTP transport
+        # Initialize HTTP transport only
         self.transport = HttpTransport(config)
        
         # Initialize error collector (includes metrics)
@@ -39,10 +39,7 @@ class RootSenseClient:
         self._initialized = True
         
         if config.debug:
-            logger.info(
-                f"RootSense initialized for project {config.project_id} "
-                f"using HTTP transport"
-            )
+            logger.info(f"RootSense initialized for project {config.project_id}")
 
     def _start(self):
         """Start background workers."""
@@ -106,6 +103,7 @@ class RootSenseClient:
            
         try:
             self.error_collector.flush(timeout=5)
+            self.transport.close()
             self._initialized = False
            
             if self.config.debug:
