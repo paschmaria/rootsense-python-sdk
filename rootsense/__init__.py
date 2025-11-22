@@ -27,22 +27,17 @@ def init(**kwargs):
         >>> rootsense.init(
         ...     connection_string="rootsense://key@api.rootsense.ai/project"
         ... )
+        >>>
+        >>> # Enable auto-instrumentation (default: True)
+        >>> rootsense.init(
+        ...     api_key="your-api-key",
+        ...     project_id="your-project",
+        ...     enable_auto_instrumentation=True  # Auto-capture DB queries, HTTP, etc.
+        ... )
     """
     global _client
     config = Config(**kwargs)
     _client = RootSenseClient(config)
-    
-    # Auto-install instrumentation if requested
-    if kwargs.get("auto_instrumentation", True):
-        try:
-            from rootsense.instrumentation import install_auto_instrumentation
-            install_auto_instrumentation()
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(
-                f"Failed to install auto-instrumentation: {e}"
-            )
-    
     return _client
 
 

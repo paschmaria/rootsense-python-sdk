@@ -20,6 +20,7 @@ class RootSenseClient:
         self.config = config
         self._lock = threading.RLock()
         self._initialized = False
+        self._auto_instrumentation = None
        
         # Initialize components
         self.sanitizer = Sanitizer(sanitize_pii=config.sanitize_pii)
@@ -27,6 +28,19 @@ class RootSenseClient:
         
         # Initialize error collector (includes metrics)
         self.error_collector = ErrorCollector(config, self.transport)
+       
+        # Initialize auto-instrumentation if enabled
+        if config.enable_auto_instrumentation:
+            try:
+                from rootsense.instrumentation.auto import AutoInstrumentation
+                self._auto_instrumentation = AutoInstrumentation(
+                    self.error_collector,
+                    self.transport,
+                    config
+                )
+                self._auto_instrumentation.initialize()
+            except Exception as e:
+                logger.warning(f"Auto-instrumentation not available: {e}")
        
         # Start background workers
         self._start()
@@ -100,6 +114,11 @@ class RootSenseClient:
             return
            
         try:
+            # Shutdown auto-instrumentation
+            if self._auto_instrumentation:
+                self._auto_instrumentation.shutdown()
+            
+            # Flush and shutdown collector
             self.error_collector.flush(timeout=5)
             self._initialized = False
            
