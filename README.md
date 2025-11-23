@@ -164,8 +164,6 @@ Works for:
 - ✅ Celery tasks
 - ✅ Any OpenTelemetry span
 
-See [Auto-Resolution Guide](docs/AUTO_RESOLUTION.md) for details.
-
 ## Configuration
 
 ### Environment Variables
@@ -254,8 +252,6 @@ With `enable_auto_instrumentation=True` (default):
 - Subprocess execution
 - Shell commands
 
-See [OpenTelemetry Integration Guide](docs/OPENTELEMETRY_INTEGRATION.md) for details.
-
 ## Advanced Usage
 
 ### Custom Context
@@ -317,23 +313,16 @@ def process_data(data):
 
 These custom spans are automatically captured by RootSense!
 
-## Migration from v0.0.x
-
-Upgrading from an earlier version? See our [Migration Guide](docs/MIGRATION_GUIDE.md).
-
-Key changes:
-- ✅ OpenTelemetry auto-instrumentation (no manual tracking needed)
-- ✅ Auto-resolution for all operation types
-- ❌ Removed `PrometheusCollector` (metrics now automatic)
-- ❌ Removed manual database monitoring
-- ✅ Simplified configuration
-
 ## Documentation
 
-- [Auto-Resolution Guide](docs/AUTO_RESOLUTION.md)
-- [OpenTelemetry Integration](docs/OPENTELEMETRY_INTEGRATION.md)
-- [Migration Guide](docs/MIGRATION_GUIDE.md)
-- [API Documentation](https://docs.rootsense.ai/python)
+Comprehensive documentation is available at [docs.rootsense.ai](https://docs.rootsense.ai) (coming soon).
+
+Topics covered:
+- Auto-resolution behavior and fingerprinting
+- OpenTelemetry integration details
+- Migration guides
+- API reference
+- Best practices
 
 ## Performance
 
