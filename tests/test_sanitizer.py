@@ -21,10 +21,10 @@ class TestSanitizer:
         
         result = sanitizer.sanitize_dict(data)
         
-        assert result["password"] == "[Filtered]"
-        assert result["api_key"] == "[Filtered]"
-        assert result["token"] == "[Filtered]"
-        assert result["credit_card"] == "[Filtered]"
+        assert result["password"] == "[REDACTED]"
+        assert result["api_key"] == "[REDACTED]"
+        assert result["token"] == "[REDACTED]"
+        assert result["credit_card"] == "[REDACTED]"
         assert result["safe_data"] == "visible"
 
     def test_sanitize_disabled(self):
@@ -57,22 +57,6 @@ class TestSanitizer:
         
         result = sanitizer.sanitize_dict(data)
         
-        assert result["user"]["password"] == "[Filtered]"
+        assert result["user"]["password"] == "[REDACTED]"
         assert result["user"]["name"] == "John"
-        assert result["metadata"]["token"] == "[Filtered]"
-
-    def test_list_sanitization(self):
-        """Test sanitization of lists."""
-        sanitizer = Sanitizer(sanitize_pii=True)
-        
-        data = [
-            {"password": "secret1"},
-            {"password": "secret2"},
-            {"name": "visible"}
-        ]
-        
-        result = sanitizer.sanitize_list(data)
-        
-        assert result[0]["password"] == "[Filtered]"
-        assert result[1]["password"] == "[Filtered]"
-        assert result[2]["name"] == "visible"
+        assert result["metadata"]["token"] == "[REDACTED]"

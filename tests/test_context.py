@@ -1,9 +1,8 @@
 """Tests for context management."""
 
-import pytest
 from rootsense.context import (
     set_context, get_context, clear_context,
-    set_user, set_tag, add_breadcrumb
+    set_user, set_tag, push_breadcrumb
 )
 
 
@@ -17,13 +16,13 @@ class TestContext:
         set_context("request", {"url": "/test"})
         context = get_context()
         
-        assert context["request"]["url"] == "/test"
+        assert context["extra"]["request"]["url"] == "/test"
 
     def test_set_user(self):
         """Test setting user context."""
         clear_context()
         
-        set_user({"id": "123", "email": "test@example.com"})
+        set_user(user_id="123", email="test@example.com")
         context = get_context()
         
         assert context["user"]["id"] == "123"
@@ -44,8 +43,8 @@ class TestContext:
         """Test breadcrumb tracking."""
         clear_context()
         
-        add_breadcrumb("navigation", "User clicked button", {"button_id": "submit"})
-        add_breadcrumb("http", "API call", {"url": "/api/users"})
+        push_breadcrumb(message="User clicked button", category="navigation", button_id="submit")
+        push_breadcrumb(message="API call", category="http", url="/api/users")
         
         context = get_context()
         
