@@ -52,7 +52,7 @@ rootsense.init(
     api_key="your-api-key",
     project_id="your-project-id",
     environment="production",
-    service_name="my-app",              # Optional: auto-detected
+    service_name="my-app",              # Optional
     enable_auto_instrumentation=True    # Default: True
 )
 ```
