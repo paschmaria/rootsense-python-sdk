@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 try:
-    from prometheus_client import Counter, Histogram, Gauge
+    from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, REGISTRY
     PROMETHEUS_AVAILABLE = True
 except ImportError:
     PROMETHEUS_AVAILABLE = False
@@ -92,6 +92,11 @@ class ErrorCollector:
                 )
                
                 if should_flush:
+                    # Collect metrics before flushing
+                    if self._metrics_enabled:
+                        metric_events = self._collect_prometheus_metrics()
+                        batch.extend(metric_events)
+                    
                     self._send_batch(batch)
                     batch = []
                     last_flush = time.time()
@@ -101,6 +106,9 @@ class ErrorCollector:
        
         # Flush remaining events on shutdown
         if batch:
+            if self._metrics_enabled:
+                metric_events = self._collect_prometheus_metrics()
+                batch.extend(metric_events)
             self._send_batch(batch)
 
     def _send_batch(self, batch):
@@ -120,6 +128,50 @@ class ErrorCollector:
                 logger.debug(f"Sent batch of {len(batch)} events")
         except Exception as e:
             logger.error(f"Failed to send batch: {e}")
+
+    def _collect_prometheus_metrics(self):
+        """Collect Prometheus metrics and convert to RootSense events."""
+        if not self._metrics_enabled:
+            return []
+            
+        events = []
+        try:
+            # Collect metrics from default registry
+            metric_families = list(REGISTRY.collect())
+            
+            for metric in metric_families:
+                # Skip internal metrics if needed, but keeping all for now
+                
+                # Convert to event format
+                event = {
+                    "event_id": str(uuid.uuid4()),
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "type": "metric",
+                    "name": metric.name,
+                    "description": metric.documentation,
+                    "unit": metric.unit,
+                    "environment": self.config.environment,
+                    "project_id": self.config.project_id,
+                    "data_points": []
+                }
+                
+                for sample in metric.samples:
+                    # sample is a namedtuple: (name, labels, value, timestamp, exemplar)
+                    dp = {
+                        "attributes": sample.labels,
+                        "value": sample.value,
+                        # Use current time if sample timestamp is None
+                        "time_unix_nano": int(time.time() * 1e9)
+                    }
+                    event["data_points"].append(dp)
+                
+                if event["data_points"]:
+                    events.append(event)
+                    
+        except Exception as e:
+            logger.warning(f"Failed to collect Prometheus metrics: {e}")
+            
+        return events
 
     def capture_exception(
         self,
