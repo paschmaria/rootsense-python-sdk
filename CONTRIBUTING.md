@@ -67,8 +67,7 @@ rootsense-python-sdk/
 │   ├── config.py          # Configuration management
 │   ├── context.py         # Context management (breadcrumbs, tags, user)
 │   ├── collectors/        # Data collectors
-│   │   ├── error_collector.py      # Exception and error collection
-│   │   └── prometheus_collector.py # Metrics collection
+│   │   └── error_collector.py      # Error and metrics collection
 │   ├── integrations/      # Framework integrations
 │   │   ├── flask.py       # Flask middleware
 │   │   ├── fastapi.py     # FastAPI middleware
@@ -338,7 +337,7 @@ import rootsense
 rootsense.init(
     api_key="test-key",
     project_id="test-project",
-    api_url="http://localhost:8000"  # Your local backend
+    backend_url="http://localhost:8000"  # Your local backend
 )
 ```
 
@@ -416,6 +415,6 @@ def capture_exception(
 - **Documentation**: [docs.rootsense.ai](https://docs.rootsense.ai)
 - **Discussions**: [GitHub Discussions](https://github.com/paschmaria/rootsense-python-sdk/discussions)
 - **Issues**: [GitHub Issues](https://github.com/paschmaria/rootsense-python-sdk/issues)
-- **Email**: support@rootsense.ai
+- **Email**: dev@rootsense.ai
 
 Thank you for contributing! 🎉

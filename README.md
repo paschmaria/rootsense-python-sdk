@@ -1,302 +1,363 @@
 # RootSense Python SDK
 
 [![PyPI version](https://badge.fury.io/py/rootsense.svg)](https://badge.fury.io/py/rootsense)
-[![Python versions](https://img.shields.io/pypi/pyversions/rootsense.svg)](https://pypi.org/project/rootsense/)
+[![Python Support](https://img.shields.io/pypi/pyversions/rootsense.svg)](https://pypi.org/project/rootsense/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Python SDK for RootSense - AI-powered incident management and error tracking platform.
+Official Python SDK for RootSense - AI-powered incident management that automatically detects, analyzes, and resolves errors in your applications.
 
 ## Features
 
-- 🚨 **Automatic Error Tracking**: Capture exceptions and errors automatically
-- 📊 **Performance Monitoring**: Track request timing, database queries, and custom operations
-- 🔍 **Distributed Tracing**: Monitor requests across microservices
-- 🎯 **Context Enrichment**: Automatic user, request, and environment context
-- 🔌 **Framework Integrations**: Native support for Flask, FastAPI, Django, and more
-- ⚡ **Async Support**: Full async/await support for modern Python applications
-- 🛡️ **PII Protection**: Built-in data sanitization and sensitive data redaction
+- 🚀 **Automatic Error Detection**: Captures exceptions and errors automatically
+- 🔍 **OpenTelemetry Integration**: Auto-instruments Django ORM, SQLAlchemy, HTTP clients, Redis, Celery
+- ✅ **Auto-Resolution**: Automatically detects when incidents are resolved
+- 🎯 **Smart Fingerprinting**: Groups similar errors intelligently
+- 📊 **Built-in Metrics**: Prometheus-compatible metrics included
+- 🔒 **PII Sanitization**: Automatically removes sensitive data
+- 🌐 **Framework Support**: Django, Flask, FastAPI
+- ⚡ **High Performance**: Minimal overhead, async event processing
 
 ## Installation
+
+### Basic Installation
 
 ```bash
 pip install rootsense
 ```
 
-### Framework-Specific Installation
+### With Auto-Instrumentation (Recommended)
 
 ```bash
-# For Flask
-pip install rootsense[flask]
+# Install with OpenTelemetry auto-instrumentation
+pip install rootsense[instrumentation]
 
-# For FastAPI
-pip install rootsense[fastapi]
+# Or with specific framework
+pip install rootsense[django,instrumentation]
+pip install rootsense[flask,instrumentation]
+pip install rootsense[fastapi,instrumentation]
 
-# For Django
-pip install rootsense[django]
-
-# For development
-pip install rootsense[dev]
+# Or everything
+pip install rootsense[all]
 ```
 
 ## Quick Start
 
-### Basic Usage
+### Initialize SDK
 
 ```python
 import rootsense
 
-# Initialize RootSense
+# Initialize with auto-instrumentation (recommended)
 rootsense.init(
     api_key="your-api-key",
     project_id="your-project-id",
-    environment="production"
+    environment="production",
+    service_name="my-app",              # Optional
+    enable_auto_instrumentation=True    # Default: True
 )
-
-# Capture an exception
-try:
-    1 / 0
-except Exception as e:
-    rootsense.capture_exception(e)
-
-# Capture a message
-rootsense.capture_message("User login successful", level="info")
 ```
 
-### Flask Integration
+That's it! RootSense now automatically:
+- Captures all exceptions
+- Tracks database queries (Django ORM, SQLAlchemy)
+- Monitors HTTP requests (requests, httpx, urllib)
+- Tracks Redis operations
+- Monitors Celery tasks
+- Auto-resolves incidents when operations recover
+
+### Manual Error Capture
+
+```python
+import rootsense
+
+try:
+    risky_operation()
+except Exception as e:
+    rootsense.capture_exception(e, context={
+        "user_id": "12345",
+        "action": "checkout"
+    })
+```
+
+## Framework Integration
+
+### Django
+
+```python
+# settings.py
+import rootsense
+
+rootsense.init(
+    api_key="your-api-key",
+    project_id="your-project-id",
+    service_name="my-django-app"
+)
+
+# That's all! No middleware needed.
+# Auto-instruments:
+# - HTTP requests
+# - Django ORM queries
+# - Template rendering
+# - Middleware operations
+```
+
+### Flask
 
 ```python
 from flask import Flask
 import rootsense
-from rootsense.integrations.flask import capture_flask_errors
 
 app = Flask(__name__)
 
-# Initialize RootSense
 rootsense.init(
     api_key="your-api-key",
-    project_id="your-project-id"
+    project_id="your-project-id",
+    service_name="my-flask-app"
 )
 
-# Add RootSense middleware
-capture_flask_errors(app)
-
-@app.route("/")
-def index():
-    return "Hello World!"
+# Auto-instruments:
+# - HTTP requests
+# - SQLAlchemy queries
+# - External HTTP calls
 ```
 
-### FastAPI Integration
+### FastAPI
 
 ```python
 from fastapi import FastAPI
 import rootsense
-from rootsense.integrations.fastapi import capture_fastapi_errors
 
 app = FastAPI()
 
-# Initialize RootSense
 rootsense.init(
     api_key="your-api-key",
-    project_id="your-project-id"
-)
-
-# Add RootSense middleware
-capture_fastapi_errors(app)
-
-@app.get("/")
-async def read_root():
-    return {"message": "Hello World"}
-```
-
-### Django Integration
-
-```python
-# In your settings.py
-
-from rootsense.integrations.django import init_django
-
-# Initialize RootSense
-init_django(
-    api_key="your-api-key",
     project_id="your-project-id",
-    environment="production"
+    service_name="my-fastapi-app"
 )
 
-# Add middleware
-MIDDLEWARE = [
-    # ... other middleware
-    'rootsense.integrations.django.DjangoMiddleware',
-]
+# Auto-instruments:
+# - HTTP requests
+# - Database operations
+# - Background tasks
+# - Dependencies
 ```
 
-## Advanced Features
+## Auto-Resolution
 
-### Performance Monitoring
+RootSense automatically detects when incidents are resolved:
 
 ```python
-from rootsense.performance import PerformanceMonitor, track_performance
+# Error occurs: Database connection timeout
+# Fingerprint: "db:postgresql:SELECT:users"
+# → Incident created in RootSense
 
-monitor = PerformanceMonitor()
-
-# Using context manager
-with monitor.track("database_query", query_type="SELECT"):
-    # Your code here
-    result = db.query("SELECT * FROM users")
-
-# Using decorator
-@track_performance("api_call", service="external_api")
-def call_external_api():
-    # API call code
-    pass
+# After database is restored:
+# SELECT queries succeed
+# → Success signals sent automatically
+# → Incident auto-resolved
 ```
 
-### Distributed Tracing
+Works for:
+- ✅ HTTP endpoints
+- ✅ Database queries
+- ✅ Redis operations
+- ✅ Celery tasks
+- ✅ Any OpenTelemetry span
 
-```python
-from rootsense.tracing import get_tracer, trace_function
-
-tracer = get_tracer()
-
-# Using context manager
-with tracer.trace("user_service.get_user") as span:
-    user = get_user_from_db(user_id)
-    span.set_tag("user_id", user_id)
-    span.set_tag("found", user is not None)
-
-# Using decorator
-@trace_function("payment_service.process_payment")
-def process_payment(amount, currency):
-    # Payment processing code
-    pass
-```
-
-### Database Monitoring
-
-```python
-from rootsense.performance import DatabaseMonitor
-
-db_monitor = DatabaseMonitor()
-
-with db_monitor.track_query(
-    "SELECT * FROM users WHERE id = %s",
-    operation="SELECT",
-    database="main"
-):
-    result = cursor.execute(query, (user_id,))
-
-# Get statistics
-stats = db_monitor.get_stats()
-print(f"Total queries: {stats['query_count']}")
-print(f"Average time: {stats['average_time']:.2f}s")
-```
-
-### Context Management
-
-```python
-from rootsense import set_user, set_tag, set_context, push_breadcrumb
-
-# Set user context
-set_user({
-    "id": "user-123",
-    "email": "user@example.com",
-    "username": "john_doe"
-})
-
-# Add custom tags
-set_tag("environment", "production")
-set_tag("version", "1.2.3")
-
-# Add custom context
-set_context("payment", {
-    "amount": 99.99,
-    "currency": "USD",
-    "payment_method": "credit_card"
-})
-
-# Add breadcrumbs for debugging
-push_breadcrumb(
-    category="auth",
-    message="User logged in",
-    level="info"
-)
-```
+See [Auto-Resolution Guide](docs/AUTO_RESOLUTION.md) for details.
 
 ## Configuration
 
 ### Environment Variables
 
-You can configure RootSense using environment variables:
-
 ```bash
 export ROOTSENSE_API_KEY="your-api-key"
 export ROOTSENSE_PROJECT_ID="your-project-id"
 export ROOTSENSE_ENVIRONMENT="production"
-export ROOTSENSE_DEBUG="false"
 ```
-
-Then initialize without parameters:
 
 ```python
 import rootsense
 
-rootsense.init()  # Reads from environment variables
+# Reads from environment variables
+rootsense.init()
 ```
 
-### Configuration Options
+### Connection String
 
 ```python
+import rootsense
+
 rootsense.init(
-    api_key="your-api-key",              # Required: Your API key
-    project_id="your-project-id",        # Required: Your project ID
-    environment="production",             # Optional: Environment name
-    backend_url="https://api.rootsense.ai",  # Optional: Backend URL
-    debug=False,                          # Optional: Enable debug logging
-    enable_prometheus=True,               # Optional: Enable Prometheus metrics
-    send_default_pii=False,               # Optional: Send PII by default
-    sample_rate=1.0,                      # Optional: Error sampling rate (0.0-1.0)
-    max_breadcrumbs=100,                  # Optional: Max breadcrumbs to store
-    buffer_size=1000,                     # Optional: Event buffer size
+    connection_string="rootsense://api-key@api.rootsense.ai/project-id"
 )
 ```
 
-## Examples
+### Full Configuration
 
-See the [examples](./examples) directory for complete working examples:
+```python
+import rootsense
 
-- [Flask Example](./examples/flask_app.py)
-- [FastAPI Example](./examples/fastapi_app.py)
-- [Django Example](./examples/django_app/)
-- [Performance Monitoring](./examples/performance_example.py)
-- [Distributed Tracing](./examples/tracing_example.py)
-
-## Testing
-
-Run tests with pytest:
-
-```bash
-pip install rootsense[dev]
-pytest
-
-# With coverage
-pytest --cov=rootsense --cov-report=html
+rootsense.init(
+    # Required
+    api_key="your-api-key",
+    project_id="your-project-id",
+    
+    # Optional
+    backend_url="https://api.rootsense.ai",  # Default
+    environment="production",                 # production, staging, development
+    service_name="my-service",                # Auto-detected if not provided
+    service_version="1.0.0",                  # Optional
+    
+    # Auto-instrumentation
+    enable_auto_instrumentation=True,         # Default: True
+    
+    # Performance
+    sample_rate=1.0,                          # 0.0 to 1.0
+    buffer_size=1000,                         # Event buffer size
+    max_breadcrumbs=100,                      # Breadcrumb limit
+    
+    # Privacy
+    sanitize_pii=True,                        # Auto-remove PII
+    
+    # Debugging
+    debug=False                               # Enable debug logging
+)
 ```
 
-## Contributing
+## What Gets Instrumented
 
-Contributions are welcome! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+With `enable_auto_instrumentation=True` (default):
 
-## License
+### Web Frameworks
+- Django (HTTP, ORM, templates, middleware)
+- Flask (HTTP, SQLAlchemy)
+- FastAPI (HTTP, dependencies, background tasks)
 
-This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
+### Database
+- Django ORM (all queries)
+- SQLAlchemy (all queries)
+- Captures: query text, duration, table name
 
-## Links
+### HTTP Clients
+- requests library
+- httpx (sync and async)
+- urllib (stdlib)
+- Captures: URL, method, status, duration
 
-- [Documentation](https://docs.rootsense.ai)
-- [Homepage](https://rootsense.ai)
-- [PyPI](https://pypi.org/project/rootsense/)
-- [GitHub](https://github.com/paschmaria/rootsense-python-sdk)
-- [Issues](https://github.com/paschmaria/rootsense-python-sdk/issues)
+### Caching & Queues
+- Redis (all commands)
+- Celery (tasks, retries)
+- Captures: operation name, duration
+
+### Processes
+- Subprocess execution
+- Shell commands
+
+See [OpenTelemetry Integration Guide](docs/OPENTELEMETRY_INTEGRATION.md) for details.
+
+## Advanced Usage
+
+### Custom Context
+
+```python
+import rootsense
+
+client = rootsense.get_client()
+client.error_collector.add_breadcrumb(
+    message="User clicked checkout",
+    category="user.action",
+    level="info"
+)
+
+client.error_collector.set_tag("user.tier", "premium")
+client.error_collector.set_context("payment", {
+    "method": "credit_card",
+    "last4": "4242"
+})
+```
+
+### Disable Auto-Instrumentation
+
+If you prefer manual control:
+
+```python
+import rootsense
+
+rootsense.init(
+    api_key="your-api-key",
+    project_id="your-project-id",
+    enable_auto_instrumentation=False  # Disable
+)
+
+# Now only manually captured errors are sent
+try:
+    risky_operation()
+except Exception as e:
+    rootsense.capture_exception(e)
+```
+
+### Custom OpenTelemetry Spans
+
+```python
+from opentelemetry import trace
+
+tracer = trace.get_tracer(__name__)
+
+def process_data(data):
+    with tracer.start_as_current_span("data_processing") as span:
+        span.set_attribute("data.size", len(data))
+        span.set_attribute("user.id", "12345")
+        
+        result = expensive_operation(data)
+        
+        span.set_attribute("result.count", len(result))
+        return result
+```
+
+These custom spans are automatically captured by RootSense!
+
+## Migration from v0.0.x
+
+Upgrading from an earlier version? See our [Migration Guide](docs/MIGRATION_GUIDE.md).
+
+Key changes:
+- ✅ OpenTelemetry auto-instrumentation (no manual tracking needed)
+- ✅ Auto-resolution for all operation types
+- ❌ Removed `PrometheusCollector` (metrics now automatic)
+- ❌ Removed manual database monitoring
+- ✅ Simplified configuration
+
+## Documentation
+
+- [Auto-Resolution Guide](docs/AUTO_RESOLUTION.md)
+- [OpenTelemetry Integration](docs/OPENTELEMETRY_INTEGRATION.md)
+- [Migration Guide](docs/MIGRATION_GUIDE.md)
+- [API Documentation](https://docs.rootsense.ai/python)
+
+## Performance
+
+RootSense is designed for production:
+- **CPU Overhead**: ~1-2%
+- **Memory**: ~10-20MB
+- **Network**: Batched, compressed events
+- **Async**: Non-blocking event processing
+
+## Requirements
+
+- Python 3.8+
+- Optional: OpenTelemetry packages for auto-instrumentation
 
 ## Support
 
-For support, email support@rootsense.ai or join our [Discord community](https://discord.gg/rootsense).
+- 📧 Email: support@rootsense.ai
+- 🐛 Issues: [GitHub Issues](https://github.com/paschmaria/rootsense-python-sdk/issues)
+- 📚 Docs: [docs.rootsense.ai](https://docs.rootsense.ai)
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

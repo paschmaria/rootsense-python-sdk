@@ -21,12 +21,17 @@ class Sanitizer:
     SSN_PATTERN = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
     CREDIT_CARD_PATTERN = re.compile(r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b')
 
-    def __init__(self, send_default_pii: bool = False):
-        self.send_default_pii = send_default_pii
+    def __init__(self, sanitize_pii: bool = True):
+        """Initialize sanitizer.
+        
+        Args:
+            sanitize_pii: Whether to sanitize PII (default: True)
+        """
+        self.sanitize_pii = sanitize_pii
 
     def sanitize_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Sanitize dictionary recursively."""
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or not self.sanitize_pii:
             return data
        
         sanitized = {}
@@ -37,7 +42,7 @@ class Sanitizer:
                 sanitized[key] = self.sanitize_dict(value)
             elif isinstance(value, list):
                 sanitized[key] = [self.sanitize_dict(item) if isinstance(item, dict) else item for item in value]
-            elif isinstance(value, str) and not self.send_default_pii:
+            elif isinstance(value, str):
                 sanitized[key] = self._sanitize_string(value)
             else:
                 sanitized[key] = value
@@ -46,10 +51,13 @@ class Sanitizer:
 
     def sanitize_headers(self, headers: Dict[str, str]) -> Dict[str, str]:
         """Sanitize HTTP headers."""
+        if not self.sanitize_pii:
+            return headers
+            
         sanitized = {}
         for key, value in headers.items():
             key_lower = key.lower()
-            if key_lower in ['authorization', 'cookie', 'x-api-key']:
+            if key_lower in ['authorization', 'cookie', 'x-api-key', 'x-auth-token']:
                 sanitized[key] = "[REDACTED]"
             else:
                 sanitized[key] = value
@@ -62,7 +70,7 @@ class Sanitizer:
 
     def _sanitize_string(self, text: str) -> str:
         """Sanitize PII patterns in strings."""
-        if not text:
+        if not text or not self.sanitize_pii:
             return text
        
         # Mask email addresses

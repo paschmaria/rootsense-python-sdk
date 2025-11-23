@@ -6,10 +6,8 @@ import threading
 from typing import Any, Dict, Optional
 
 from rootsense.config import Config
-from rootsense.collectors.prometheus_collector import PrometheusCollector
 from rootsense.collectors.error_collector import ErrorCollector
 from rootsense.transport.http_transport import HttpTransport
-from rootsense.transport.websocket_transport import WebSocketTransport
 from rootsense.utils.sanitizer import Sanitizer
 
 logger = logging.getLogger(__name__)
@@ -22,19 +20,27 @@ class RootSenseClient:
         self.config = config
         self._lock = threading.RLock()
         self._initialized = False
+        self._auto_instrumentation = None
        
         # Initialize components
-        self.sanitizer = Sanitizer(send_default_pii=config.send_default_pii)
-        self.http_transport = HttpTransport(config)
-        self.ws_transport = WebSocketTransport(config)
+        self.sanitizer = Sanitizer(sanitize_pii=config.sanitize_pii)
+        self.transport = HttpTransport(config)
+        
+        # Initialize error collector (includes metrics)
+        self.error_collector = ErrorCollector(config, self.transport)
        
-        # Initialize collectors
-        if config.enable_prometheus:
-            self.prometheus_collector = PrometheusCollector(config)
-        else:
-            self.prometheus_collector = None
-           
-        self.error_collector = ErrorCollector(config, self.http_transport)
+        # Initialize auto-instrumentation if enabled
+        if config.enable_auto_instrumentation:
+            try:
+                from rootsense.instrumentation.auto import AutoInstrumentation
+                self._auto_instrumentation = AutoInstrumentation(
+                    self.error_collector,
+                    self.transport,
+                    config
+                )
+                self._auto_instrumentation.initialize()
+            except Exception as e:
+                logger.warning(f"Auto-instrumentation not available: {e}")
        
         # Start background workers
         self._start()
@@ -50,7 +56,6 @@ class RootSenseClient:
     def _start(self):
         """Start background workers."""
         self.error_collector.start()
-        self.ws_transport.start()
 
     def capture_exception(
         self,
@@ -62,11 +67,19 @@ class RootSenseClient:
        
         Args:
             exception: The exception to capture
-            context: Additional context
+            context: Additional context (service, endpoint, etc.)
             **kwargs: Additional metadata
            
         Returns:
             Event ID if captured, None otherwise
+            
+        Example:
+            >>> import rootsense
+            >>> rootsense.init(api_key="...", project_id="...")
+            >>> try:
+            ...     1 / 0
+            ... except Exception as e:
+            ...     event_id = rootsense.capture_exception(e)
         """
         return self.error_collector.capture_exception(exception, context, **kwargs)
 
@@ -87,6 +100,11 @@ class RootSenseClient:
            
         Returns:
             Event ID if captured, None otherwise
+            
+        Example:
+            >>> import rootsense
+            >>> rootsense.init(api_key="...", project_id="...")
+            >>> rootsense.capture_message("User logged in", level="info")
         """
         return self.error_collector.capture_message(message, level, context, **kwargs)
 
@@ -96,8 +114,12 @@ class RootSenseClient:
             return
            
         try:
+            # Shutdown auto-instrumentation
+            if self._auto_instrumentation:
+                self._auto_instrumentation.shutdown()
+            
+            # Flush and shutdown collector
             self.error_collector.flush(timeout=5)
-            self.ws_transport.close()
             self._initialized = False
            
             if self.config.debug:

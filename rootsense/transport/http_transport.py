@@ -53,7 +53,18 @@ class HttpTransport:
         return False
 
     def send_success_signal(self, fingerprint: str, context: Dict[str, Any]) -> bool:
-        """Send success signal for auto-resolution."""
+        """Send success signal for auto-resolution.
+        
+        When an endpoint that previously had errors starts succeeding,
+        this signals the backend to potentially auto-resolve the incident.
+        
+        Args:
+            fingerprint: The incident fingerprint (error_type + service + endpoint)
+            context: Request context (endpoint, method, etc.)
+            
+        Returns:
+            True if signal was sent successfully, False otherwise
+        """
         url = f"{self.config.base_url}/events/success"
        
         try:
@@ -62,7 +73,8 @@ class HttpTransport:
                 json={
                     "fingerprint": fingerprint,
                     "context": context,
-                    "project_id": self.config.project_id
+                    "project_id": self.config.project_id,
+                    "environment": self.config.environment
                 },
                 timeout=5
             )

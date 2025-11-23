@@ -1,103 +1,78 @@
-"""Tests for data sanitizer."""
+"""Tests for PII sanitization."""
 
 import pytest
 from rootsense.utils.sanitizer import Sanitizer
 
 
 class TestSanitizer:
-    """Test Sanitizer functionality."""
+    """Test PII sanitization."""
 
-    def test_sanitize_removes_sensitive_keys(self):
-        """Test that sensitive keys are removed."""
-        sanitizer = Sanitizer(send_default_pii=False)
+    def test_sanitize_enabled(self):
+        """Test sanitization when enabled."""
+        sanitizer = Sanitizer(sanitize_pii=True)
         
         data = {
-            "username": "john_doe",
             "password": "secret123",
-            "email": "john@example.com",
-            "credit_card": "4111111111111111",
-            "api_key": "abc123",
-            "normal_field": "normal_value"
+            "api_key": "key-12345",
+            "token": "bearer-token",
+            "credit_card": "1234-5678-9012-3456",
+            "safe_data": "visible"
         }
         
-        sanitized = sanitizer.sanitize(data)
+        result = sanitizer.sanitize_dict(data)
         
-        assert "password" not in sanitized
-        assert "credit_card" not in sanitized
-        assert "api_key" not in sanitized
-        assert sanitized["normal_field"] == "normal_value"
+        assert result["password"] == "[Filtered]"
+        assert result["api_key"] == "[Filtered]"
+        assert result["token"] == "[Filtered]"
+        assert result["credit_card"] == "[Filtered]"
+        assert result["safe_data"] == "visible"
 
-    def test_sanitize_with_pii_enabled(self):
-        """Test sanitization with PII enabled."""
-        sanitizer = Sanitizer(send_default_pii=True)
+    def test_sanitize_disabled(self):
+        """Test that sanitization can be disabled."""
+        sanitizer = Sanitizer(sanitize_pii=False)
         
         data = {
-            "username": "john_doe",
-            "email": "john@example.com",
-            "password": "secret123"
+            "password": "secret123",
+            "api_key": "key-12345"
         }
         
-        sanitized = sanitizer.sanitize(data)
+        result = sanitizer.sanitize_dict(data)
         
-        # Email and username should be kept when PII is enabled
-        assert sanitized.get("username") == "john_doe"
-        assert sanitized.get("email") == "john@example.com"
-        # But password should still be removed
-        assert "password" not in sanitized
+        assert result["password"] == "secret123"
+        assert result["api_key"] == "key-12345"
 
-    def test_sanitize_nested_data(self):
-        """Test sanitizing nested data structures."""
-        sanitizer = Sanitizer(send_default_pii=False)
+    def test_nested_sanitization(self):
+        """Test sanitization of nested structures."""
+        sanitizer = Sanitizer(sanitize_pii=True)
         
         data = {
             "user": {
-                "id": 123,
                 "password": "secret",
-                "profile": {
-                    "email": "test@example.com",
-                    "api_key": "key123"
-                }
+                "name": "John"
+            },
+            "metadata": {
+                "token": "abc123"
             }
         }
         
-        sanitized = sanitizer.sanitize(data)
+        result = sanitizer.sanitize_dict(data)
         
-        assert "password" not in sanitized["user"]
-        assert "api_key" not in sanitized["user"]["profile"]
-        assert sanitized["user"]["id"] == 123
+        assert result["user"]["password"] == "[Filtered]"
+        assert result["user"]["name"] == "John"
+        assert result["metadata"]["token"] == "[Filtered]"
 
-    def test_sanitize_lists(self):
-        """Test sanitizing data in lists."""
-        sanitizer = Sanitizer(send_default_pii=False)
+    def test_list_sanitization(self):
+        """Test sanitization of lists."""
+        sanitizer = Sanitizer(sanitize_pii=True)
         
-        data = {
-            "users": [
-                {"id": 1, "password": "pass1"},
-                {"id": 2, "password": "pass2"}
-            ]
-        }
+        data = [
+            {"password": "secret1"},
+            {"password": "secret2"},
+            {"name": "visible"}
+        ]
         
-        sanitized = sanitizer.sanitize(data)
+        result = sanitizer.sanitize_list(data)
         
-        for user in sanitized["users"]:
-            assert "password" not in user
-            assert "id" in user
-
-    def test_sanitize_custom_patterns(self):
-        """Test sanitizing with custom patterns."""
-        sanitizer = Sanitizer(
-            send_default_pii=False,
-            custom_patterns=[r"secret_.*"]
-        )
-        
-        data = {
-            "secret_token": "abc123",
-            "secret_key": "def456",
-            "public_data": "visible"
-        }
-        
-        sanitized = sanitizer.sanitize(data)
-        
-        assert "secret_token" not in sanitized
-        assert "secret_key" not in sanitized
-        assert sanitized["public_data"] == "visible"
+        assert result[0]["password"] == "[Filtered]"
+        assert result[1]["password"] == "[Filtered]"
+        assert result[2]["name"] == "visible"

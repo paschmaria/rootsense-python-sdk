@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [{name = "RootSense", email = "support@rootsense.ai"}]
-keywords = ["rootsense", "error-tracking", "monitoring", "observability"]
+keywords = ["rootsense", "error-tracking", "monitoring", "observability", "apm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -18,21 +18,87 @@ classifiers = [
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11"
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12"
 ]
 dependencies = [
     "prometheus-client>=0.19.0",
     "requests>=2.31.0",
-    "websockets>=12.0",
+    "urllib3>=2.0.0",
     "python-dateutil>=2.8.0"
 ]
 
 [project.optional-dependencies]
+# Framework integrations
 flask = ["flask>=2.0.0"]
 fastapi = ["fastapi>=0.100.0", "starlette>=0.27.0"]
 django = ["django>=3.2.0"]
-dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0", "pytest-asyncio>=0.21.0", "black>=23.0.0", "responses>=0.23.0"]
+
+# Auto-instrumentation (OpenTelemetry)
+instrumentation = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-instrumentation>=0.41b0",
+    "opentelemetry-instrumentation-django>=0.41b0",
+    "opentelemetry-instrumentation-flask>=0.41b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.41b0",
+    "opentelemetry-instrumentation-requests>=0.41b0",
+    "opentelemetry-instrumentation-httpx>=0.41b0",
+    "opentelemetry-instrumentation-urllib>=0.41b0",
+    "opentelemetry-instrumentation-redis>=0.41b0",
+    "opentelemetry-instrumentation-celery>=0.41b0"
+]
+
+# Full installation with all frameworks and auto-instrumentation
+all = [
+    "flask>=2.0.0",
+    "fastapi>=0.100.0",
+    "starlette>=0.27.0",
+    "django>=3.2.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-instrumentation>=0.41b0",
+    "opentelemetry-instrumentation-django>=0.41b0",
+    "opentelemetry-instrumentation-flask>=0.41b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.41b0",
+    "opentelemetry-instrumentation-requests>=0.41b0",
+    "opentelemetry-instrumentation-httpx>=0.41b0",
+    "opentelemetry-instrumentation-urllib>=0.41b0",
+    "opentelemetry-instrumentation-redis>=0.41b0",
+    "opentelemetry-instrumentation-celery>=0.41b0"
+]
+
+# Development dependencies
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "responses>=0.23.0"
+]
 
 [project.urls]
 Homepage = "https://rootsense.ai"
 Repository = "https://github.com/paschmaria/rootsense-python-sdk"
+Documentation = "https://docs.rootsense.ai"
+"Bug Tracker" = "https://github.com/paschmaria/rootsense-python-sdk/issues"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false

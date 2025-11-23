@@ -21,34 +21,6 @@ class TestRootSenseClient:
             assert client.config == mock_config
             assert client._initialized is True
 
-    def test_client_with_prometheus_enabled(self):
-        """Test client initializes with Prometheus collector when enabled."""
-        config = Config(
-            api_key="test_key",
-            project_id="test_project",
-            enable_prometheus=True
-        )
-        
-        with patch('rootsense.client.HttpTransport'), \
-             patch('rootsense.client.WebSocketTransport'), \
-             patch('rootsense.client.ErrorCollector'), \
-             patch('rootsense.client.PrometheusCollector') as mock_prom:
-            
-            client = RootSenseClient(config)
-            
-            assert mock_prom.called
-            assert client.prometheus_collector is not None
-
-    def test_client_without_prometheus(self, mock_config):
-        """Test client works without Prometheus collector."""
-        with patch('rootsense.client.HttpTransport'), \
-             patch('rootsense.client.WebSocketTransport'), \
-             patch('rootsense.client.ErrorCollector'):
-            
-            client = RootSenseClient(mock_config)
-            
-            assert client.prometheus_collector is None
-
     def test_capture_exception(self, mock_config, sample_exception):
         """Test capturing exceptions."""
         with patch('rootsense.client.HttpTransport'), \
