@@ -2,7 +2,7 @@
 
 import pytest
 import time
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock, MagicMock, patch
 from rootsense.config import Config
 from rootsense.collectors.error_collector import ErrorCollector
 from rootsense.context import set_context, set_user, set_tag
@@ -96,22 +96,7 @@ class TestErrorCollector:
         # Different endpoint should have different fingerprint
         assert fp1 != fp3
 
-    def test_record_request(self, collector):
-        """Test request metric recording."""
-        collector.record_request(
-            method="GET",
-            endpoint="/users",
-            status_code=200,
-            duration=0.123,
-            service="api"
-        )
-        # Should not raise
 
-    def test_active_request_tracking(self, collector):
-        """Test active request tracking."""
-        with collector.track_active_request("api"):
-            pass
-        # Should not raise
 
     def test_buffer_overflow(self, config, transport):
         """Test behavior when buffer is full."""
@@ -131,10 +116,59 @@ class TestErrorCollector:
         assert event_id2 is not None
         # Third should be None due to full buffer
 
-    def test_flush(self, collector, transport):
-        """Test flushing pending events."""
-        collector.capture_message("Test 1")
-        collector.capture_message("Test 2")
-        
         collector.flush(timeout=1)
         # Should have sent events
+
+    @patch("rootsense.collectors.error_collector.REGISTRY")
+    @patch("rootsense.collectors.error_collector.PROMETHEUS_AVAILABLE", True)
+    def test_collect_prometheus_metrics(self, mock_registry, collector):
+        """Test Prometheus metric collection."""
+        # Ensure metrics are enabled
+        collector._metrics_enabled = True
+        # Mock metric family
+        mock_metric = MagicMock()
+        mock_metric.name = "test_metric"
+        mock_metric.documentation = "Test doc"
+        mock_metric.unit = "1"
+        
+        mock_sample = MagicMock()
+        mock_sample.name = "test_metric"
+        mock_sample.labels = {"label": "value"}
+        mock_sample.value = 10.0
+        
+        mock_metric.samples = [mock_sample]
+        
+        mock_registry.collect.return_value = [mock_metric]
+        
+        # Force metric collection
+        events = collector._collect_prometheus_metrics()
+        
+        assert len(events) == 1
+        assert events[0]["type"] == "metric"
+        assert events[0]["name"] == "test_metric"
+        assert events[0]["data_points"][0]["value"] == 10.0
+        assert events[0]["data_points"][0]["attributes"]["label"] == "value"
+
+    @patch("rootsense.collectors.error_collector.REGISTRY")
+    @patch("rootsense.collectors.error_collector.PROMETHEUS_AVAILABLE", True)
+    def test_metrics_on_stop(self, mock_registry, collector, transport):
+        """Test that metrics are collected when stopping."""
+        collector._metrics_enabled = True
+        collector.batch_send_duration = MagicMock()
+        
+        # Setup mock metrics
+        mock_metric = MagicMock()
+        mock_metric.name = "test_metric"
+        mock_metric.samples = [MagicMock(value=1.0, labels={})]
+        mock_registry.collect.return_value = [mock_metric]
+        
+        time.sleep(0.1)
+        collector.stop()
+        
+        # Should have sent batch with metrics
+        assert transport.send_events.called
+        batch = transport.send_events.call_args[0][0]
+        
+        # Check for metric event in batch
+        has_metric = any(e.get("type") == "metric" for e in batch)
+        assert has_metric

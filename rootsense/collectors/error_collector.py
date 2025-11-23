@@ -105,10 +105,11 @@ class ErrorCollector:
                 logger.error(f"Error in worker thread: {e}")
        
         # Flush remaining events on shutdown
+        if self._metrics_enabled:
+            metric_events = self._collect_prometheus_metrics()
+            batch.extend(metric_events)
+            
         if batch:
-            if self._metrics_enabled:
-                metric_events = self._collect_prometheus_metrics()
-                batch.extend(metric_events)
             self._send_batch(batch)
 
     def _send_batch(self, batch):
