@@ -140,32 +140,29 @@ class ErrorCollector:
             metric_families = list(REGISTRY.collect())
             
             for metric in metric_families:
-                # Skip internal metrics if needed, but keeping all for now
+                # Skip internal Go runtime and process metrics to reduce data volume
+                if metric.name.startswith('go_') or metric.name.startswith('process_'):
+                    continue
                 
-                # Convert to event format
-                event = {
-                    "event_id": str(uuid.uuid4()),
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "type": "metric",
-                    "name": metric.name,
-                    "description": metric.documentation,
-                    "unit": metric.unit,
-                    "environment": self.config.environment,
-                    "project_id": self.config.project_id,
-                    "data_points": []
-                }
-                
+                # Create one event per sample (flatten structure)
                 for sample in metric.samples:
                     # sample is a namedtuple: (name, labels, value, timestamp, exemplar)
-                    dp = {
-                        "attributes": sample.labels,
+                    event = {
+                        "event_id": str(uuid.uuid4()),
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "type": "metric",
+                        "metric_type": metric.type,  # counter, gauge, histogram, summary
+                        "metric_name": metric.name,  # Base metric name
+                        "sample_name": sample.name,  # Full sample name with suffix (_total, _count, _bucket, etc)
+                        "description": metric.documentation,
+                        "unit": metric.unit,
+                        "environment": self.config.environment,
+                        "project_id": self.config.project_id,
+                        "labels": sample.labels,
                         "value": sample.value,
-                        # Use current time if sample timestamp is None
-                        "time_unix_nano": int(time.time() * 1e9)
+                        # Use sample timestamp if available, otherwise current time
+                        "time_unix_nano": int(sample.timestamp * 1e9) if sample.timestamp else int(time.time() * 1e9)
                     }
-                    event["data_points"].append(dp)
-                
-                if event["data_points"]:
                     events.append(event)
                     
         except Exception as e:
