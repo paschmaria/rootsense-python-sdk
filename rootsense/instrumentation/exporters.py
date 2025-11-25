@@ -1,11 +1,15 @@
 """Custom OpenTelemetry exporters for RootSense."""
 
 import logging
-from typing import Sequence, Optional
+import uuid
+from datetime import datetime, timezone
+from typing import Sequence, Optional, List
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.sdk.metrics.export import MetricExporter, MetricExportResult
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.metrics.export import MetricsData
+
+from rootsense.events import SpanEvent, MetricEvent, SpanStatus, SpanEventData, SpanError, MetricDataPoint
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +51,7 @@ class RootSenseSpanExporter(SpanExporter):
             logger.error(f"Error exporting spans: {e}")
             return SpanExportResult.FAILURE
 
-    def _convert_span_to_event(self, span: ReadableSpan) -> Optional[dict]:
+    def _convert_span_to_event(self, span: ReadableSpan) -> Optional[SpanEvent]:
         """Convert OTel span to RootSense event format."""
         attributes = dict(span.attributes) if span.attributes else {}
         
@@ -61,39 +65,70 @@ class RootSenseSpanExporter(SpanExporter):
         if not (is_error or is_important):
             return None
         
-        event = {
+        # Get config from error_collector for required fields
+        config = self.error_collector.config
+        
+        # Build status object
+        status: SpanStatus = {
+            'code': span.status.status_code.name,
+        }
+        if span.status.description:
+            status['description'] = span.status.description
+        
+        # Build span events list
+        span_events: List[SpanEventData] = []
+        if span.events:
+            for e in span.events:
+                span_event: SpanEventData = {
+                    'name': e.name,
+                    'timestamp': e.timestamp,
+                    'attributes': dict(e.attributes) if e.attributes else {}
+                }
+                span_events.append(span_event)
+        
+        event: SpanEvent = {
+            'event_id': str(uuid.uuid4()),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'type': 'span',
             'operation_type': operation_type,
             'name': span.name,
             'trace_id': format(span.context.trace_id, '032x'),
             'span_id': format(span.context.span_id, '016x'),
-            'parent_span_id': format(span.parent.span_id, '016x') if span.parent else None,
-            'start_time': span.start_time,
-            'end_time': span.end_time,
-            'duration_ns': span.end_time - span.start_time if span.end_time else None,
-            'status': {
-                'code': span.status.status_code.name,
-                'description': span.status.description
-            },
-            'attributes': attributes,
-            'events': [{
-                'name': e.name,
-                'timestamp': e.timestamp,
-                'attributes': dict(e.attributes) if e.attributes else {}
-            } for e in span.events] if span.events else [],
-            'is_error': is_error
+            'is_error': is_error,
+            'environment': config.environment,
+            'project_id': config.project_id,
         }
+        
+        # Add optional fields
+        if span.parent:
+            event['parent_span_id'] = format(span.parent.span_id, '016x')
+        if span.start_time:
+            event['start_time'] = span.start_time
+        if span.end_time:
+            event['end_time'] = span.end_time
+        if span.end_time and span.start_time:
+            event['duration_ns'] = span.end_time - span.start_time
+        if status:
+            event['status'] = status
+        if attributes:
+            event['attributes'] = attributes
+        if span_events:
+            event['events'] = span_events
         
         # Add error details if present
         if is_error and span.events:
             for event_obj in span.events:
                 if event_obj.name == 'exception':
                     attrs = dict(event_obj.attributes) if event_obj.attributes else {}
-                    event['error'] = {
-                        'type': attrs.get('exception.type'),
-                        'message': attrs.get('exception.message'),
-                        'stacktrace': attrs.get('exception.stacktrace')
-                    }
+                    error: SpanError = {}
+                    if attrs.get('exception.type'):
+                        error['type'] = attrs.get('exception.type')
+                    if attrs.get('exception.message'):
+                        error['message'] = attrs.get('exception.message')
+                    if attrs.get('exception.stacktrace'):
+                        error['stacktrace'] = attrs.get('exception.stacktrace')
+                    if error:
+                        event['error'] = error
         
         return event
 
@@ -201,39 +236,61 @@ class RootSenseMetricExporter(MetricExporter):
             logger.error(f"Error exporting metrics: {e}")
             return MetricExportResult.FAILURE
 
-    def _convert_metric_to_event(self, metric, resource) -> Optional[dict]:
+    def _convert_metric_to_event(self, metric, resource) -> Optional[MetricEvent]:
         """Convert OTel metric to RootSense event format."""
         # Extract resource attributes
         resource_attrs = dict(resource.attributes) if resource.attributes else {}
         
-        event = {
+        # Get config from http_transport for required fields
+        config = self.http_transport.config
+        
+        event: MetricEvent = {
+            'event_id': str(uuid.uuid4()),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'type': 'metric',
-            'name': metric.name,
-            'description': metric.description,
-            'unit': metric.unit,
-            'resource': resource_attrs,
-            'data_points': []
+            'metric_name': metric.name,
+            'name': metric.name,  # Also set name for compatibility
+            'environment': config.environment,
+            'project_id': config.project_id,
         }
         
+        # Add optional metric fields
+        if metric.description:
+            event['description'] = metric.description
+        if metric.unit:
+            event['unit'] = metric.unit
+        if resource_attrs:
+            event['resource'] = resource_attrs
+        
         # Convert data points based on metric type
+        data_points: List[MetricDataPoint] = []
         for data_point in metric.data.data_points:
-            dp = {
+            dp: MetricDataPoint = {
                 'attributes': dict(data_point.attributes) if data_point.attributes else {},
-                'start_time_unix_nano': data_point.start_time_unix_nano,
-                'time_unix_nano': data_point.time_unix_nano
             }
+            
+            # Add timestamp fields
+            if hasattr(data_point, 'start_time_unix_nano'):
+                dp['start_time_unix_nano'] = data_point.start_time_unix_nano
+            if hasattr(data_point, 'time_unix_nano'):
+                dp['time_unix_nano'] = data_point.time_unix_nano
             
             # Add value based on metric type
             if hasattr(data_point, 'value'):
                 dp['value'] = data_point.value
             elif hasattr(data_point, 'sum'):
                 dp['sum'] = data_point.sum
-                dp['count'] = data_point.count
+                if hasattr(data_point, 'count'):
+                    dp['count'] = data_point.count
                 if hasattr(data_point, 'min'):
                     dp['min'] = data_point.min
+                if hasattr(data_point, 'max'):
                     dp['max'] = data_point.max
             
-            event['data_points'].append(dp)
+            data_points.append(dp)
+        
+        if data_points:
+            event['data_points'] = data_points
         
         return event
 

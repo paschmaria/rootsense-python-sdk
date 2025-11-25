@@ -7,8 +7,10 @@ import threading
 import time
 import traceback
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
+
+from rootsense.events import ErrorEvent, MessageEvent, MetricEvent
 
 try:
     from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, REGISTRY
@@ -61,6 +63,16 @@ class ErrorCollector:
         except Exception as e:
             logger.warning(f"Failed to initialize Prometheus metrics: {e}")
             self._metrics_enabled = False
+
+    @staticmethod
+    def _get_timestamp_ns() -> str:
+        """Get ISO format timestamp with nanosecond precision."""
+        now_ns = time.time_ns()
+        dt = datetime.fromtimestamp(now_ns / 1e9, tz=timezone.utc)
+        # Format as ISO without timezone, then add nanoseconds and Z
+        base_str = dt.strftime('%Y-%m-%dT%H:%M:%S')
+        nanoseconds = now_ns % 1_000_000_000
+        return f"{base_str}.{nanoseconds:09d}Z"
 
     def start(self):
         """Start the background worker."""
@@ -148,9 +160,9 @@ class ErrorCollector:
                 # Create one event per sample (flatten structure)
                 for sample in metric.samples:
                     # sample is a namedtuple: (name, labels, value, timestamp, exemplar)
-                    event = {
+                    event: MetricEvent = {
                         "event_id": str(uuid.uuid4()),
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": self._get_timestamp_ns(),
                         "type": "metric",
                         "metric_type": metric.type,  # counter, gauge, histogram, summary
                         "metric_name": metric.name,  # Base metric name
@@ -192,11 +204,11 @@ class ErrorCollector:
         
         # Track for auto-resolution
         with self._lock:
-            self._recent_errors[fingerprint] = datetime.utcnow()
+            self._recent_errors[fingerprint] = datetime.now(timezone.utc)
        
-        event = {
+        event: ErrorEvent = {
             "event_id": event_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": self._get_timestamp_ns(),
             "type": "error",
             "exception_type": error_type,
             "message": str(exception),
@@ -206,10 +218,30 @@ class ErrorCollector:
             "project_id": self.config.project_id,
         }
        
+        # Add context fields if provided
         if context:
-            event.update(context)
+            # Extract known error event fields
+            if "service" in context:
+                event["service"] = context["service"]
+            if "endpoint" in context:
+                event["endpoint"] = context["endpoint"]
+            if "method" in context:
+                event["method"] = context["method"]
+            if "status_code" in context:
+                event["status_code"] = context["status_code"]
+            if "request_id" in context:
+                event["request_id"] = context["request_id"]
+            if "trace_id" in context:
+                event["trace_id"] = context["trace_id"]
+            if "span_id" in context:
+                event["span_id"] = context["span_id"]
+            # Add any other context as extra fields
+            event.setdefault("extra", {}).update({k: v for k, v in context.items() 
+                                                   if k not in ["service", "endpoint", "method", "status_code", "request_id", "trace_id", "span_id"]})
            
-        event.update(kwargs)
+        # Add kwargs as extra fields
+        if kwargs:
+            event.setdefault("extra", {}).update(kwargs)
        
         # Add to queue
         try:
@@ -242,7 +274,7 @@ class ErrorCollector:
         fingerprint = self._generate_success_fingerprint(endpoint)
         
         with self._lock:
-            self._recent_successes[fingerprint] = datetime.utcnow()
+            self._recent_successes[fingerprint] = datetime.now(timezone.utc)
             
             # Check if this endpoint had recent errors
             if fingerprint in self._recent_errors:
@@ -250,7 +282,7 @@ class ErrorCollector:
                 
                 # If error was recent (within last hour) and now succeeding,
                 # send success signal for potential auto-resolution
-                if datetime.utcnow() - last_error < timedelta(hours=1):
+                if datetime.now(timezone.utc) - last_error < timedelta(hours=1):
                     success_context = {
                         "endpoint": endpoint,
                         "method": method,
@@ -275,9 +307,9 @@ class ErrorCollector:
         """Capture a message."""
         event_id = str(uuid.uuid4())
        
-        event = {
+        event: MessageEvent = {
             "event_id": event_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": self._get_timestamp_ns(),
             "type": "message",
             "level": level,
             "message": message,
@@ -285,10 +317,26 @@ class ErrorCollector:
             "project_id": self.config.project_id,
         }
        
+        # Add context fields if provided
         if context:
-            event.update(context)
+            # Extract known message event fields
+            if "category" in context:
+                event["category"] = context["category"]
+            if "logger" in context:
+                event["logger"] = context["logger"]
+            if "module" in context:
+                event["module"] = context["module"]
+            if "function" in context:
+                event["function"] = context["function"]
+            if "line_number" in context:
+                event["line_number"] = context["line_number"]
+            # Add any other context as extra fields
+            event.setdefault("extra", {}).update({k: v for k, v in context.items() 
+                                                  if k not in ["category", "logger", "module", "function", "line_number"]})
            
-        event.update(kwargs)
+        # Add kwargs as extra fields
+        if kwargs:
+            event.setdefault("extra", {}).update(kwargs)
        
         try:
             self._queue.put_nowait(event)
