@@ -5,6 +5,8 @@ import time
 from typing import List, Dict, Any
 import requests
 
+from rootsense.events import RootSenseEvent
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,7 +22,7 @@ class HttpTransport:
             "User-Agent": f"rootsense-python-sdk/0.1.0"
         })
 
-    def send_events(self, events: List[Dict[str, Any]]) -> bool:
+    def send_events(self, events: List[RootSenseEvent]) -> bool:
         """Send a batch of events with retry logic."""
         url = f"{self.config.base_url}/events/batch"
        
